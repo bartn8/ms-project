@@ -10,63 +10,21 @@
 #ifndef __MESH_MAIN_H__
 #define __MESH_MAIN_H__
 
-#include <sys/time.h>
-#include "esp_err.h"
+#include "my_commons.h"
+#include "network.h"
+#include "crypto.h"
 
 /*******************************************************
  *                Macros
  *******************************************************/
 
-
 /*******************************************************
  *                Constants
  *******************************************************/
-#define RX_SIZE (256)
-#define TX_SIZE (256)
-
-#define BOARD_SENSORS 10
-
-#define MESH_ID_LENGTH 6
-#define MESH_PWD_LENGTH 64
-#define STATION_SSID_LENGTH 32
-#define STATION_PWD_LENGTH 64
-#define SERVER_IP_DOT_LENGTH 16
 
 /*******************************************************
  *                Structures
  *******************************************************/
-typedef struct
-{
-  uint64_t nonce;
-  uint16_t module_id;
-  int64_t timestamp_sec;
-  int64_t timestamp_usec;
-  uint8_t reqtype; //Per evitare endianess
-  uint8_t mesh_id[MESH_ID_LENGTH];
-  int8_t sensors[BOARD_SENSORS];
-} app_frame_data_t;
-
-typedef enum
-{
-  SENSORS = 0,
-  ROOT,
-  RESET_SENSOR
-} app_reqtype_t;
-
-typedef struct
-{
-  uint64_t nonce;
-  int64_t timestamp_sec;
-  int64_t timestamp_usec;
-  uint16_t module_id;
-  uint8_t reqtype; //Per evitare endianess
-} app_request_data_t;
-
-typedef struct
-{
-  app_request_data_t data;
-  uint8_t hmac[HMAC_SHA256_DIGEST_SIZE];
-} app_request_t;
 
 typedef struct
 {
@@ -86,10 +44,12 @@ typedef struct
   char server_ip[SERVER_IP_DOT_LENGTH];
   //SERVER PORT (2 byte)
   uint16_t server_port;
-  //SERVER PORT (2 byte)
-  uint16_t local_server_port;
-  //TASK BRIDGE SERVICE DELAY MILLIS 16 bit (2 byte)
-  uint16_t task_bridgeservice_delay_millis;
+  //HMAC SECRET (32 byte)
+  uint8_t key_hmac[SHA256_KEY_LENGTH];
+  //AES SECRET (32 byte)
+  uint8_t key_aes[AES_KEY_LENGTH];
+  //AES-CBC IV (16 byte)
+  uint8_t iv_aes[AES_BLOCK_LENGTH];
   //TASK MESH SERVICE DELAY MILLIS 16 bit (2 byte)
   uint16_t task_meshservice_delay_millis;
   //SEND TIMEOUT MILLIS 16 bit (2 byte)
@@ -113,24 +73,12 @@ typedef struct
 void startDHCPC();
 void stopDHCPC();
 
-int createSocket();
-int bindSocket();
-void closeSocket();
-
-size_t receiveUDP(uint8_t *buf, size_t bufLen);
-size_t sendUDP(uint8_t *buf, size_t bufLen);
-
-void htonFrame(app_frame_t * frame);
-void ntohFrame(app_frame_t * frame);
-void htonRequest(app_request_t * request);
-void ntohRequest(app_request_t * request);
-
-int setCurrentTime(app_request_data_t *request);
+int setCurrentTime(int64_t timestamp_sec, int64_t timestamp_usec);
 
 void readSensors(app_frame_t *frame);
 void resetSensors();
 
-size_t createSensorPacket(app_request_data_t *request, uint8_t *buffer, size_t len);
+size_t createSensorPacket(uint64_t nonce, uint8_t *buffer, size_t len);
 
 int sameAddress(mesh_addr_t *a, mesh_addr_t *b);
 

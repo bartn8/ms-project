@@ -23,20 +23,14 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 
-//Socket
-#include "lwip/err.h"
-#include "lwip/sockets.h"
-#include "lwip/sys.h"
-
-//HMAC
-#include "mbedtls/md.h"
-
 #include "include/mesh_main.h"
+#include "include/crypto.h"
+#include "include/network.h"
 
 /*******************************************************
  *                Variable Definitions
  *******************************************************/
-static const char *MESH_TAG = "ms-project";
+static const char *LOG_TAG = "ms-project-main";
 
 static uint8_t task_meshservice_tx_buf[TX_SIZE] = {
     0,
@@ -45,19 +39,10 @@ static uint8_t task_meshservice_rx_buf[RX_SIZE] = {
     0,
 };
 
-static uint8_t task_bridgeservice_tx_buf[TX_SIZE] = {
-    0,
-};
-static uint8_t task_bridgeservice_rx_buf[RX_SIZE] = {
-    0,
-};
-
-
 static bool is_running = true;
 static bool is_mesh_connected = false;
 static bool is_ds_connected = false;
 
-static bool is_task_bridgeservice_started = false;
 static bool is_task_meshservice_started = false;
 
 static mesh_addr_t mesh_parent_addr;
@@ -66,14 +51,12 @@ static esp_netif_t *netif_sta = NULL;
 
 static flash_data_t fdata;
 
-static int udpSocket = 0;
 static bool gotSTAIP = false;
 
 static mesh_addr_t rootAddress;
 static mesh_addr_t staAddress, softAPAddress;
 
-static int8_t sensors_state[BOARD_SENSORS];
-static esp_timer_handle_t periodic_sensors_timer;
+static float sensors_state[BOARD_SENSORS];
 
 /*******************************************************
  *                Function Declarations
@@ -101,146 +84,11 @@ void stopDHCPC()
     }
 }
 
-int createSocket()
-{
-    if (udpSocket > 0)
-        close(udpSocket);
-
-    udpSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
-
-    if (udpSocket < 0)
-    {
-        ESP_LOGE(MESH_TAG, "Unable to create socket: errno %d", errno);
-    }
-
-    return udpSocket;
-}
-
-int bindSocket()
-{
-    struct sockaddr_in6 dest_addr;
-    struct sockaddr_in *dest_addr_ip4 = (struct sockaddr_in *)&dest_addr;
-    app_config_t *config = &(fdata.config);
-
-    if (udpSocket > 0)
-    {
-        dest_addr_ip4->sin_addr.s_addr = htonl(INADDR_ANY);
-        dest_addr_ip4->sin_family = AF_INET;
-        dest_addr_ip4->sin_port = htons(config->local_server_port);
-        int err = bind(udpSocket, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-        if (err < 0)
-        {
-            ESP_LOGE(MESH_TAG, "Socket unable to bind: errno %d", errno);
-            return err;
-        }
-    }
-    else
-    {
-        ESP_LOGW(MESH_TAG, "UDP Socket not initialized.");
-        return -1;
-    }
-    return ESP_OK;
-}
-
-void closeSocket(){
-    if (udpSocket > 0)
-        close(udpSocket);
-}
-
-size_t receiveUDP(uint8_t *buf, size_t bufLen)
-{
-    if (udpSocket > 0)
-    {
-        app_config_t *config = &(fdata.config);
-        char ipbuff[INET_ADDRSTRLEN];
-        struct sockaddr_storage source_addr; // Large enough for both IPv4 or IPv6
-        socklen_t socklen = sizeof(source_addr);
-        int len = recvfrom(udpSocket, buf, bufLen - 1, 0, (struct sockaddr *)&source_addr, &socklen);
-
-        //Controllo che sia il server che ha inviato il messaggio.
-
-        inet_ntop(source_addr.ss_family, &(((struct sockaddr_in *)&source_addr)->sin_addr), ipbuff, INET_ADDRSTRLEN);
-
-        if (inet_addr((const char *)(config->server_ip)) != inet_addr((const char *)ipbuff))
-        {
-            ESP_LOGE(MESH_TAG, "Received not from server.");
-            return -1;
-        }
-
-        return len;
-    }
-    else
-    {
-        ESP_LOGW(MESH_TAG, "UDP Socket not initialized.");
-        return -1;
-    }
-}
-
-size_t sendUDP(uint8_t *buf, size_t bufLen)
-{
-    if (udpSocket > 0)
-    {
-        app_config_t *config = &(fdata.config);
-        struct sockaddr_in dest_addr;
-        dest_addr.sin_addr.s_addr = inet_addr((const char *)(config->server_ip));
-        dest_addr.sin_family = AF_INET;
-        dest_addr.sin_port = htobe16(config->server_port);
-
-        size_t sent = sendto(udpSocket, buf, bufLen, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-
-        if (sent < bufLen)
-            ESP_LOGE(MESH_TAG, "UDP Send failed (%d < %d)", sent, bufLen);
-
-        return sent;
-    }
-    else
-    {
-        ESP_LOGW(MESH_TAG, "UDP Socket not initialized.");
-        return -1;
-    }
-}
-
-void htonFrame(app_frame_t *frame)
-{
-    app_frame_data_t *data = &(frame->data);
-    data->nonce = htobe64(data->nonce);
-    data->module_id = htobe16(data->module_id);
-    data->timestamp_sec = htobe64(data->timestamp_sec);
-    data->timestamp_usec = htobe64(data->timestamp_usec);
-}
-
-void ntohFrame(app_frame_t *frame)
-{
-    app_frame_data_t *data = &(frame->data);
-    data->nonce = be64toh(data->nonce);
-    data->module_id = be16toh(data->module_id);
-    data->timestamp_sec = be64toh(data->timestamp_sec);
-    data->timestamp_usec = be64toh(data->timestamp_usec);
-}
-
-void htonRequest(app_request_t *request)
-{
-    app_request_data_t *data = &(request->data);
-    data->nonce = htobe64(data->nonce);
-    data->module_id = htobe16(data->module_id);
-    data->timestamp_sec = htobe64(data->timestamp_sec);
-    data->timestamp_usec = htobe64(data->timestamp_usec);
-}
-
-void ntohRequest(app_request_t *request)
-{
-    app_request_data_t *data = &(request->data);
-    data->nonce = be64toh(data->nonce);
-    data->module_id = be16toh(data->module_id);
-    data->timestamp_sec = be64toh(data->timestamp_sec);
-    data->timestamp_usec = be64toh(data->timestamp_usec);
-}
-
-int setCurrentTime(app_request_data_t *request)
+int setCurrentTime(int64_t timestamp_sec, int64_t timestamp_usec)
 {
     struct timeval timestamp;
-    timestamp.tv_sec = request->timestamp_sec;
-    timestamp.tv_usec = request->timestamp_usec;
+    timestamp.tv_sec = timestamp_sec;
+    timestamp.tv_usec = timestamp_usec;
 
     if (settimeofday(&timestamp, NULL) == 0)
         return ESP_OK;
@@ -251,7 +99,7 @@ int setCurrentTime(app_request_data_t *request)
 void readSensors(app_frame_t *frame)
 {
     app_frame_data_t *data = &(frame->data);
-    int8_t *sensors = data->sensors;
+    float *sensors = data->sensors;
 
     for (uint8_t i = 0; i < BOARD_SENSORS; i++)
     {
@@ -267,7 +115,7 @@ void resetSensors(){
     }
 }
 
-size_t createSensorPacket(app_request_data_t *request, uint8_t *buffer, size_t len)
+size_t createSensorPacket(uint64_t nonce, uint8_t *buffer, size_t len)
 {
     app_config_t *config = &(fdata.config);
     app_frame_t frame;
@@ -284,14 +132,13 @@ size_t createSensorPacket(app_request_data_t *request, uint8_t *buffer, size_t l
     gettimeofday(&tv, NULL);
 
     data->module_id = config->module_id;
-    data->nonce = request->nonce;
+    data->nonce = nonce;
     data->timestamp_sec = tv.tv_sec;
     data->timestamp_usec = tv.tv_usec;
-    data->reqtype = request->reqtype;
 
     memcpy(data->mesh_id, config->mesh_id, MESH_ID_LENGTH);
     htonFrame(&frame);
-    doLocalHMAC(((uint8_t *)&(frame.data)), sizeof(app_frame_data_t), ((uint8_t *)&(frame.hmac)));
+    doHMAC(((uint8_t *)&(frame.data)), sizeof(app_frame_data_t), ((uint8_t *)&(frame.hmac)));
 
     memcpy(buffer, &frame, sizeof(app_frame_t));
     return sizeof(app_frame_t);
@@ -309,119 +156,6 @@ int sameAddress(mesh_addr_t *a, mesh_addr_t *b)
     return ESP_OK;
 }
 
-void periodic_sensors_check_callback(void* arg)
-{
-    //Tabella mapping GPIO, tipo sensore
-    app_config_t *config = &(fdata.config);
-
-    for (uint8_t i = 0; i < BOARD_SENSORS; i++)
-    {
-        if ((config->board_sensors_mask >> i) & 1)
-        {
-            //Mantengo a 1 fino a reset dal server
-            sensors_state[i] |= gpio_get_level(GPIO_SENSORS_IO[i]);
-            //Check testato
-            //if(sensors_state[i] > 0)
-            //    ESP_LOGI(MESH_TAG, "Sensor %d triggered!", i);
-        }
-        else
-        {
-            sensors_state[i] = -1;
-        }
-    }
-}
-
-void esp_task_bridgeservice(void *arg)
-{
-    app_config_t *config = &(fdata.config);
-    is_running = true;
-
-    //Attendo che ho preso l'ip
-    while (esp_mesh_is_root() && !gotSTAIP)
-        vTaskDelay(config->task_bridgeservice_delay_millis / portTICK_RATE_MS);
-
-    while (is_running && esp_mesh_is_root())
-    {
-        //Ricevo senza timeout dal server.
-        size_t len = receiveUDP(task_bridgeservice_rx_buf, RX_SIZE);
-        //IMPORTANTE: copio direttamente nel buffer di trasmissione perché c'è sideeffect dopo
-        memcpy(task_bridgeservice_tx_buf, task_bridgeservice_rx_buf, len);
-
-        ESP_LOGI(MESH_TAG, "Received %d bytes from server", len);
-
-        if (len >= sizeof(app_request_t))
-        {
-            app_request_t *request = (app_request_t *)task_bridgeservice_rx_buf;
-            app_request_data_t *data = &(request->data);
-
-            ntohRequest(request);
-            setCurrentTime(data);
-
-            if (data->reqtype == ROOT)
-            {
-                //Invio al server un messaggio di cortesia.
-                size_t len = createHelloPacket(task_bridgeservice_tx_buf, TX_SIZE);
-                sendUDP(task_bridgeservice_tx_buf, len);
-            }
-            else if (data->reqtype == SENSORS || data->reqtype == RESET_SENSOR)
-            {
-                if (data->reqtype == RESET_SENSOR && data->module_id == config->module_id){
-                    //Il messaggio è rivolto solo a me: non ritrasmetto.
-                    resetSensors();
-                    ESP_LOGI(MESH_TAG, "Sensors trigger restored!");
-                }else{
-                    //Invio agli altri nodi il pacchetto del server inalterato
-                    mesh_addr_t route_table[CONFIG_MESH_ROUTE_TABLE_SIZE];
-                    int route_table_size = 0;
-                    esp_err_t err;
-                    mesh_data_t datamesh;
-
-                    datamesh.data = task_bridgeservice_tx_buf;
-                    datamesh.size = len;
-                    datamesh.proto = MESH_PROTO_BIN;
-                    datamesh.tos = MESH_TOS_P2P;
-
-                    //MAC address (6 bytes per address)
-                    esp_mesh_get_routing_table((mesh_addr_t *)&route_table,
-                                            CONFIG_MESH_ROUTE_TABLE_SIZE * 6, &route_table_size);
-
-                    for (int i = 0; i < route_table_size; i++)
-                    {
-                        //Se invio a me stesso passo.
-                        if (sameAddress(&staAddress, &route_table[i]) == ESP_OK)
-                            continue;
-
-                        //DEBUG
-                        ESP_LOGI(MESH_TAG, "Forward Sensor Packet to " MACSTR, MAC2STR(route_table[i].addr));
-
-                        err = esp_mesh_send(&route_table[i], &datamesh, MESH_DATA_P2P, NULL, 0);
-
-                        if (err)
-                        {
-                            ESP_LOGE(MESH_TAG,
-                                    "[ROOT-2-UNICAST][L:%d]parent:" MACSTR " to " MACSTR ", heap:%d[err:0x%x, proto:%d, tos:%d]",
-                                    mesh_layer, MAC2STR(mesh_parent_addr.addr),
-                                    MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
-                                    err, datamesh.proto, datamesh.tos);
-                        }
-                    }
-
-                    if(data->reqtype == SENSORS){
-                        //Invio al server il mio sensore.
-                        size_t len = createSensorPacket(data, task_bridgeservice_tx_buf, TX_SIZE);
-                        sendUDP(task_bridgeservice_tx_buf, len);
-                    }
-                }
-            }
-        }
-
-        //vTaskDelay(config->task_bridgeservice_delay_millis / portTICK_RATE_MS);
-    }
-
-    is_task_bridgeservice_started = false;
-    vTaskDelete(NULL);
-}
-
 void esp_task_meshservice(void *arg)
 {
     app_config_t *config = &(fdata.config);
@@ -434,11 +168,8 @@ void esp_task_meshservice(void *arg)
     data.size = RX_SIZE;
     is_running = true;
 
-    app_request_t *request;
-
     while (is_running)
     {
-
         //Devo ricevere i pacchetti per l'esterno
         err = esp_mesh_recv(&from, &data, 10, &flag, NULL, 0);
 
@@ -453,14 +184,14 @@ void esp_task_meshservice(void *arg)
             {
                 if (err != ESP_OK || data.size < sizeof(app_frame_t))
                 {
-                    ESP_LOGE(MESH_TAG, "(Master)Recv failed. err: %d, size: %d from " MACSTR ", root: " MACSTR, err, data.size, MAC2STR(from.addr), MAC2STR(rootAddress.addr));
+                    ESP_LOGE(LOG_TAG, "(Master)Recv failed. err: %d, size: %d from " MACSTR ", root: " MACSTR, err, data.size, MAC2STR(from.addr), MAC2STR(rootAddress.addr));
                 }
                 else
                 {
                     //Ricevuto: devo inoltrarlo al server.
                     memcpy(task_meshservice_tx_buf, task_meshservice_rx_buf, sizeof(app_frame_t));
-                    sendUDP(task_meshservice_tx_buf, sizeof(app_frame_t));
-                    ESP_LOGI(MESH_TAG, "Inoltro al server un frame da parte di " MACSTR, MAC2STR(from.addr));
+                    sendUDP(task_meshservice_tx_buf, sizeof(app_frame_t), config->server_ip, config->server_port);
+                    ESP_LOGI(LOG_TAG, "Inoltro al server un frame da parte di " MACSTR, MAC2STR(from.addr));
                 }
             }
         }
@@ -469,65 +200,22 @@ void esp_task_meshservice(void *arg)
             //Andato in timeout continuiamo
             if (err != ESP_ERR_MESH_TIMEOUT)
             {
-                if (err != ESP_OK || data.size < sizeof(app_request_t))
-                {
-                    ESP_LOGE(MESH_TAG, "(Slave)Recv failed. err: %d, size: %d", err, data.size);
-                }
-                else
-                {
-                    request = (app_request_t *)task_meshservice_rx_buf;
-                    app_request_data_t *data = &(request->data);
+                // size_t len = createSensorPacket(data, task_meshservice_tx_buf, TX_SIZE);
 
-                    ESP_LOGI(MESH_TAG, "Ricevuto dalla root una richiesta.");
+                // mesh_data_t data;
+                // data.data = task_meshservice_tx_buf;
+                // data.size = len;
+                // data.proto = MESH_PROTO_BIN;
+                // data.tos = MESH_TOS_P2P;
 
-                    //Check HMAC del server
-                    if (!checkServerHMAC((uint8_t *)data, sizeof(app_request_data_t), request->hmac))
-                    {
-                        char myhmacstr[65];
-                        char hmacstr[65];
-                        char *myhmacstrpos = myhmacstr;
-                        char *hmacstrpos = hmacstr;
-                        uint8_t myhmac[HMAC_SHA256_DIGEST_SIZE];
-                        doServerHMAC((uint8_t *)data, sizeof(app_request_data_t), myhmac);
+                // //Invio al server se possibile (la root fa da bridge).
+                // err = esp_mesh_send(NULL, &data, 0, NULL, 0);
 
-                        for (int k = 0; k < HMAC_SHA256_DIGEST_SIZE; k++)
-                        {
-                            myhmacstrpos += sprintf(myhmacstrpos, "%02x", myhmac[k]);
-                            hmacstrpos += sprintf(hmacstrpos, "%02x", request->hmac[k]);
-                        }
-
-                        ESP_LOGI(MESH_TAG, "Check Server HMAC failed (%s != %s)", myhmacstr, hmacstr);
-                        continue;
-                    }
-
-                    ntohRequest(request);
-
-                    setCurrentTime(data);
-
-                    if (data->reqtype == SENSORS)
-                    {
-                        size_t len = createSensorPacket(data, task_meshservice_tx_buf, TX_SIZE);
-
-                        mesh_data_t data;
-                        data.data = task_meshservice_tx_buf;
-                        data.size = len;
-                        data.proto = MESH_PROTO_BIN;
-                        data.tos = MESH_TOS_P2P;
-
-                        //Invio al server se possibile (la root fa da bridge).
-                        err = esp_mesh_send(NULL, &data, 0, NULL, 0);
-
-                        if (err != ESP_OK)
-                        {
-                            ESP_LOGE(MESH_TAG,
-                                     "Failed to send packet to root: %d", err);
-                        }
-                    }
-                    else if (data->reqtype == RESET_SENSOR && data->module_id == config->module_id){
-                        resetSensors();
-                        ESP_LOGI(MESH_TAG, "Sensors trigger restored!");
-                    }
-                }
+                // if (err != ESP_OK)
+                // {
+                //     ESP_LOGE(LOG_TAG,
+                //                 "Failed to send packet to root: %d", err);
+                // }
             }
         }
     }
@@ -543,12 +231,6 @@ esp_err_t esp_start_tasks(void)
     {
         is_task_meshservice_started = true;
         xTaskCreate(esp_task_meshservice, "TSKMSH", 3072, NULL, 5, NULL);
-    }
-
-    if (!is_task_bridgeservice_started && esp_mesh_is_root())
-    {
-        is_task_bridgeservice_started = true;
-        xTaskCreate(esp_task_bridgeservice, "TSKBRG", 3072, NULL, 5, NULL);
     }
 
     return ESP_OK;
@@ -567,7 +249,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
     case MESH_EVENT_STARTED:
     {
         esp_mesh_get_id(&id);
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_MESH_STARTED>ID:" MACSTR "", MAC2STR(id.addr));
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_MESH_STARTED>ID:" MACSTR "", MAC2STR(id.addr));
         is_mesh_connected = false;
         is_ds_connected = false;
         gotSTAIP = false;
@@ -576,7 +258,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
     break;
     case MESH_EVENT_STOPPED:
     {
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_STOPPED>");
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_STOPPED>");
         is_mesh_connected = false;
         is_ds_connected = false;
         gotSTAIP = false;
@@ -586,7 +268,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
     case MESH_EVENT_CHILD_CONNECTED:
     {
         mesh_event_child_connected_t *child_connected = (mesh_event_child_connected_t *)event_data;
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_CHILD_CONNECTED>aid:%d, " MACSTR "",
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_CHILD_CONNECTED>aid:%d, " MACSTR "",
                  child_connected->aid,
                  MAC2STR(child_connected->mac));
     }
@@ -594,7 +276,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
     case MESH_EVENT_CHILD_DISCONNECTED:
     {
         mesh_event_child_disconnected_t *child_disconnected = (mesh_event_child_disconnected_t *)event_data;
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_CHILD_DISCONNECTED>aid:%d, " MACSTR "",
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_CHILD_DISCONNECTED>aid:%d, " MACSTR "",
                  child_disconnected->aid,
                  MAC2STR(child_disconnected->mac));
     }
@@ -602,7 +284,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
     case MESH_EVENT_ROUTING_TABLE_ADD:
     {
         mesh_event_routing_table_change_t *routing_table = (mesh_event_routing_table_change_t *)event_data;
-        ESP_LOGW(MESH_TAG, "<MESH_EVENT_ROUTING_TABLE_ADD>add %d, new:%d, layer:%d",
+        ESP_LOGW(LOG_TAG, "<MESH_EVENT_ROUTING_TABLE_ADD>add %d, new:%d, layer:%d",
                  routing_table->rt_size_change,
                  routing_table->rt_size_new, mesh_layer);
     }
@@ -610,7 +292,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
     case MESH_EVENT_ROUTING_TABLE_REMOVE:
     {
         mesh_event_routing_table_change_t *routing_table = (mesh_event_routing_table_change_t *)event_data;
-        ESP_LOGW(MESH_TAG, "<MESH_EVENT_ROUTING_TABLE_REMOVE>remove %d, new:%d, layer:%d",
+        ESP_LOGW(LOG_TAG, "<MESH_EVENT_ROUTING_TABLE_REMOVE>remove %d, new:%d, layer:%d",
                  routing_table->rt_size_change,
                  routing_table->rt_size_new, mesh_layer);
     }
@@ -618,7 +300,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
     case MESH_EVENT_NO_PARENT_FOUND:
     {
         mesh_event_no_parent_found_t *no_parent = (mesh_event_no_parent_found_t *)event_data;
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_NO_PARENT_FOUND>scan times:%d",
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_NO_PARENT_FOUND>scan times:%d",
                  no_parent->scan_times);
     }
     /* TODO handler for the failure */
@@ -629,7 +311,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
         esp_mesh_get_id(&id);
         mesh_layer = connected->self_layer;
         memcpy(&mesh_parent_addr.addr, connected->connected.bssid, 6);
-        ESP_LOGI(MESH_TAG,
+        ESP_LOGI(LOG_TAG,
                  "<MESH_EVENT_PARENT_CONNECTED>layer:%d-->%d, parent:" MACSTR "%s, ID:" MACSTR ", duty:%d",
                  last_layer, mesh_layer, MAC2STR(mesh_parent_addr.addr),
                  esp_mesh_is_root() ? "<ROOT>" : (mesh_layer == 2) ? "<layer2>"
@@ -644,7 +326,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
     case MESH_EVENT_PARENT_DISCONNECTED:
     {
         mesh_event_disconnected_t *disconnected = (mesh_event_disconnected_t *)event_data;
-        ESP_LOGI(MESH_TAG,
+        ESP_LOGI(LOG_TAG,
                  "<MESH_EVENT_PARENT_DISCONNECTED>reason:%d",
                  disconnected->reason);
         is_mesh_connected = false;
@@ -656,7 +338,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
     {
         mesh_event_layer_change_t *layer_change = (mesh_event_layer_change_t *)event_data;
         mesh_layer = layer_change->new_layer;
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_LAYER_CHANGE>layer:%d-->%d%s",
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_LAYER_CHANGE>layer:%d-->%d%s",
                  last_layer, mesh_layer,
                  esp_mesh_is_root() ? "<ROOT>" : (mesh_layer == 2) ? "<layer2>"
                                                                    : "");
@@ -666,7 +348,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
     case MESH_EVENT_ROOT_ADDRESS:
     {
         mesh_event_root_address_t *root_addr = (mesh_event_root_address_t *)event_data;
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_ROOT_ADDRESS>root address:" MACSTR "",
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_ROOT_ADDRESS>root address:" MACSTR "",
                  MAC2STR(root_addr->addr));
 
         memcpy(&rootAddress, root_addr, 6);
@@ -675,7 +357,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
     case MESH_EVENT_VOTE_STARTED:
     {
         mesh_event_vote_started_t *vote_started = (mesh_event_vote_started_t *)event_data;
-        ESP_LOGI(MESH_TAG,
+        ESP_LOGI(LOG_TAG,
                  "<MESH_EVENT_VOTE_STARTED>attempts:%d, reason:%d, rc_addr:" MACSTR "",
                  vote_started->attempts,
                  vote_started->reason,
@@ -684,13 +366,13 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
     break;
     case MESH_EVENT_VOTE_STOPPED:
     {
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_VOTE_STOPPED>");
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_VOTE_STOPPED>");
         break;
     }
     case MESH_EVENT_ROOT_SWITCH_REQ:
     {
         mesh_event_root_switch_req_t *switch_req = (mesh_event_root_switch_req_t *)event_data;
-        ESP_LOGI(MESH_TAG,
+        ESP_LOGI(LOG_TAG,
                  "<MESH_EVENT_ROOT_SWITCH_REQ>reason:%d, rc_addr:" MACSTR "",
                  switch_req->reason,
                  MAC2STR(switch_req->rc_addr.addr));
@@ -702,7 +384,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
         mesh_layer = esp_mesh_get_layer();
         esp_mesh_get_parent_bssid(&mesh_parent_addr);
 
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_ROOT_SWITCH_ACK>layer:%d, parent:" MACSTR "", mesh_layer, MAC2STR(mesh_parent_addr.addr));
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_ROOT_SWITCH_ACK>layer:%d, parent:" MACSTR "", mesh_layer, MAC2STR(mesh_parent_addr.addr));
     }
     break;
     case MESH_EVENT_TODS_STATE:
@@ -710,13 +392,13 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
         mesh_event_toDS_state_t *toDs_state = (mesh_event_toDS_state_t *)event_data;
         is_ds_connected = *toDs_state == MESH_TODS_REACHABLE;
 
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_TODS_REACHABLE>state:%d", *toDs_state);
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_TODS_REACHABLE>state:%d", *toDs_state);
     }
     break;
     case MESH_EVENT_ROOT_ASKED_YIELD:
     {
         mesh_event_root_conflict_t *root_conflict = (mesh_event_root_conflict_t *)event_data;
-        ESP_LOGI(MESH_TAG,
+        ESP_LOGI(LOG_TAG,
                  "<MESH_EVENT_ROOT_ASKED_YIELD>" MACSTR ", rssi:%d, capacity:%d",
                  MAC2STR(root_conflict->addr),
                  root_conflict->rssi,
@@ -726,57 +408,57 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
     case MESH_EVENT_CHANNEL_SWITCH:
     {
         mesh_event_channel_switch_t *channel_switch = (mesh_event_channel_switch_t *)event_data;
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_CHANNEL_SWITCH>new channel:%d", channel_switch->channel);
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_CHANNEL_SWITCH>new channel:%d", channel_switch->channel);
     }
     break;
     case MESH_EVENT_SCAN_DONE:
     {
         mesh_event_scan_done_t *scan_done = (mesh_event_scan_done_t *)event_data;
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_SCAN_DONE>number:%d",
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_SCAN_DONE>number:%d",
                  scan_done->number);
     }
     break;
     case MESH_EVENT_NETWORK_STATE:
     {
         mesh_event_network_state_t *network_state = (mesh_event_network_state_t *)event_data;
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_NETWORK_STATE>is_rootless:%d",
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_NETWORK_STATE>is_rootless:%d",
                  network_state->is_rootless);
     }
     break;
     case MESH_EVENT_STOP_RECONNECTION:
     {
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_STOP_RECONNECTION>");
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_STOP_RECONNECTION>");
     }
     break;
     case MESH_EVENT_FIND_NETWORK:
     {
         mesh_event_find_network_t *find_network = (mesh_event_find_network_t *)event_data;
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_FIND_NETWORK>new channel:%d, router BSSID:" MACSTR "",
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_FIND_NETWORK>new channel:%d, router BSSID:" MACSTR "",
                  find_network->channel, MAC2STR(find_network->router_bssid));
     }
     break;
     case MESH_EVENT_ROUTER_SWITCH:
     {
         mesh_event_router_switch_t *router_switch = (mesh_event_router_switch_t *)event_data;
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_ROUTER_SWITCH>new router:%s, channel:%d, " MACSTR "",
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_ROUTER_SWITCH>new router:%s, channel:%d, " MACSTR "",
                  router_switch->ssid, router_switch->channel, MAC2STR(router_switch->bssid));
     }
     break;
     case MESH_EVENT_PS_PARENT_DUTY:
     {
         mesh_event_ps_duty_t *ps_duty = (mesh_event_ps_duty_t *)event_data;
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_PS_PARENT_DUTY>duty:%d", ps_duty->duty);
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_PS_PARENT_DUTY>duty:%d", ps_duty->duty);
     }
     break;
     case MESH_EVENT_PS_CHILD_DUTY:
     {
         mesh_event_ps_duty_t *ps_duty = (mesh_event_ps_duty_t *)event_data;
-        ESP_LOGI(MESH_TAG, "<MESH_EVENT_PS_CHILD_DUTY>cidx:%d, " MACSTR ", duty:%d", ps_duty->child_connected.aid - 1,
+        ESP_LOGI(LOG_TAG, "<MESH_EVENT_PS_CHILD_DUTY>cidx:%d, " MACSTR ", duty:%d", ps_duty->child_connected.aid - 1,
                  MAC2STR(ps_duty->child_connected.mac), ps_duty->duty);
     }
     break;
     default:
-        ESP_LOGI(MESH_TAG, "unknown id:%d", event_id);
+        ESP_LOGI(LOG_TAG, "unknown id:%d", event_id);
         break;
     }
 }
@@ -785,14 +467,16 @@ void ip_event_handler(void *arg, esp_event_base_t event_base,
                       int32_t event_id, void *event_data)
 {
     ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-    ESP_LOGI(MESH_TAG, "<IP_EVENT_STA_GOT_IP>IP:" IPSTR, IP2STR(&event->ip_info.ip));
+    ESP_LOGI(LOG_TAG, "<IP_EVENT_STA_GOT_IP>IP:" IPSTR, IP2STR(&event->ip_info.ip));
     gotSTAIP = true;
+
+    app_config_t *config = &(fdata.config);
 
     if (esp_mesh_is_root())
     {
         //creazione socket
         createSocket();
-        bindSocket();
+        //bindSocket(localPort?);
     }
 }
 
@@ -800,7 +484,7 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
                       int32_t event_id, void *event_data)
 {
     wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *)event_data;
-    ESP_LOGW(MESH_TAG, "<WIFI_EVENT_AP_STADISCONNECTED>");
+    ESP_LOGW(LOG_TAG, "<WIFI_EVENT_AP_STADISCONNECTED>");
     gotSTAIP = false;
     closeSocket();
 }
@@ -811,9 +495,7 @@ void app_main(void)
     fdata.config.module_id = 2;
     fdata.config.wifi_channel = 1;
     fdata.config.server_port = 11412;
-    fdata.config.task_bridgeservice_delay_millis = 500;
     fdata.config.task_meshservice_delay_millis = 500;
-    fdata.config.task_helloservice_delay_millis = 5000;
     fdata.config.mesh_send_timeout_millis = 1000;
 
     for (int i = 0; i < 6; i++)
@@ -824,20 +506,9 @@ void app_main(void)
     memcpy(&fdata.config.station_ssid, "WIFI_HOME_R", 12);
     memcpy(&fdata.config.station_pwd, "", 0);
 
-    //PIN Configuration
-    for(uint8_t i = 0; i < BOARD_SENSORS; i++){
-        if((fdata.config.board_sensors_mask >> i) & 1){
-            ESP_ERROR_CHECK(gpio_set_direction(GPIO_SENSORS_IO[i], GPIO_MODE_INPUT));
-            ESP_ERROR_CHECK(gpio_pulldown_en(GPIO_SENSORS_IO[i]));
-        }
-    }
-
-    //Timer Configuration
-    const esp_timer_create_args_t periodic_sensors_timer_args = {
-            .callback = &periodic_sensors_check_callback,
-            /* name is optional, but may help identify the timer when debugging */
-            .name = "sensors_check"
-    };
+    //Init Crypto
+    ESP_ERROR_CHECK(initHMAC(fdata.config.key_hmac));
+    ESP_ERROR_CHECK(initAES(fdata.config.key_aes, fdata.config.iv_aes));
 
     // Initialize NVS
     esp_err_t err = nvs_flash_init();
@@ -845,7 +516,7 @@ void app_main(void)
     // {
     //     // NVS partition was truncated and needs to be erased
     //     // Retry nvs_flash_init
-    //     ESP_LOGW(MESH_TAG, "Flash truncated: erasing...");
+    //     ESP_LOGW(LOG_TAG, "Flash truncated: erasing...");
     //     ESP_ERROR_CHECK(nvs_flash_erase());
     //     err = nvs_flash_init();
     // }
@@ -916,7 +587,7 @@ void app_main(void)
     /* mesh start */
     ESP_ERROR_CHECK(esp_mesh_start());
 
-    ESP_LOGI(MESH_TAG, "mesh starts successfully, heap:%d, %s<%d>%s, ps:%d\n", esp_get_minimum_free_heap_size(),
+    ESP_LOGI(LOG_TAG, "mesh starts successfully, heap:%d, %s<%d>%s, ps:%d\n", esp_get_minimum_free_heap_size(),
              esp_mesh_is_root_fixed() ? "root fixed" : "root not fixed",
              esp_mesh_get_topology(), esp_mesh_get_topology() ? "(chain)" : "(tree)", esp_mesh_is_ps_enabled());
 }
