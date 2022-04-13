@@ -1,13 +1,10 @@
-#ifndef __NETWORK_H__
-#define __NETWORK_H__
+#ifndef __MS_CRYPTO_H__
+#define __MS_CRYPTO_H__
 
 #include <stdio.h>
 #include <stdint.h>
 
-#include "lwip/sockets.h"
-
-#include "my_commons.h"
-#include "crypto.h"
+#include "ms_commons.h"
 
 /*******************************************************
  *                Macros
@@ -18,29 +15,15 @@
  *                Constants
  *******************************************************/
 
-
+#define AES_BLOCK_LENGTH 16
+#define AES_KEY_LENGTH_BITS 256
+#define AES_KEY_LENGTH (AES_KEY_LENGTH_BITS/8)
+#define SHA256_KEY_LENGTH 32
+#define SHA256_DIGEST_LENGTH 32
 
 /*******************************************************
  *                Structures
  *******************************************************/
-
-typedef struct
-{
-  uint64_t nonce;
-  uint16_t module_id;
-  int64_t timestamp_sec;
-  int64_t timestamp_usec;
-  uint8_t mesh_id[MESH_ID_LENGTH];
-  float sensors[BOARD_SENSORS];
-} app_frame_data_t;
-
-typedef struct
-{
-  app_frame_data_t data;
-  uint8_t hmac[SHA256_DIGEST_LENGTH];
-} app_frame_t;
-
-typedef struct sockaddr_storage sockaddr_storage_t;
 
 /*******************************************************
  *                Variables Declarations
@@ -50,15 +33,14 @@ typedef struct sockaddr_storage sockaddr_storage_t;
  *                Function Declarations
  *******************************************************/
 
-int createSocket();
-int bindSocket(uint16_t port);
-void closeSocket();
+int initHMAC(const uint8_t *key);
+void doHMAC(const uint8_t *payload, size_t payloadLength, uint8_t *hmacResult);
+void freeHMAC();
 
-size_t receiveUDP(uint8_t *buf, size_t bufLen, sockaddr_storage_t *source_addr);
-size_t sendUDP(uint8_t *buf, size_t bufLen, const char *ip, uint16_t port);
-
-void htonFrame(app_frame_t * frame);
-void ntohFrame(app_frame_t * frame);
-
+int initAES(const uint8_t *key, const uint8_t *iv);
+size_t padding(uint8_t *payload, size_t payloadLength);
+int encryptAES_CBC(const uint8_t *payload, size_t payloadLength, uint8_t *encryptResult);
+int decryptAES_CBC(const uint8_t *payload, size_t payloadLength, uint8_t *decryptResult);
+void freeAES();
 
 #endif

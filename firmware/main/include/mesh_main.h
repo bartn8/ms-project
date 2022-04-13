@@ -10,9 +10,9 @@
 #ifndef __MESH_MAIN_H__
 #define __MESH_MAIN_H__
 
-#include "my_commons.h"
-#include "network.h"
-#include "crypto.h"
+#include "ms_commons.h"
+#include "ms_network.h"
+#include "ms_crypto.h"
 
 /*******************************************************
  *                Macros

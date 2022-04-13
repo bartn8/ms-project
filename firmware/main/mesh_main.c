@@ -24,8 +24,9 @@
 #include "driver/gpio.h"
 
 #include "include/mesh_main.h"
-#include "include/crypto.h"
-#include "include/network.h"
+#include "include/ms_crypto.h"
+#include "include/ms_network.h"
+#include "include/ms_gpio.h"
 
 /*******************************************************
  *                Variable Definitions
@@ -55,8 +56,6 @@ static bool gotSTAIP = false;
 
 static mesh_addr_t rootAddress;
 static mesh_addr_t staAddress, softAPAddress;
-
-static float sensors_state[BOARD_SENSORS];
 
 /*******************************************************
  *                Function Declarations
@@ -96,54 +95,6 @@ int setCurrentTime(int64_t timestamp_sec, int64_t timestamp_usec)
         return -1;
 }
 
-void readSensors(app_frame_t *frame)
-{
-    app_frame_data_t *data = &(frame->data);
-    float *sensors = data->sensors;
-
-    for (uint8_t i = 0; i < BOARD_SENSORS; i++)
-    {
-        sensors[i] = sensors_state[i];
-    }
-}
-
-void resetSensors(){
-    for (uint8_t i = 0; i < BOARD_SENSORS; i++)
-    {
-        if(sensors_state[i] > 0)
-            sensors_state[i] = 0;
-    }
-}
-
-size_t createSensorPacket(uint64_t nonce, uint8_t *buffer, size_t len)
-{
-    app_config_t *config = &(fdata.config);
-    app_frame_t frame;
-    app_frame_data_t *data;
-    struct timeval tv;
-
-    if (len < sizeof(app_frame_t))
-        return -1;
-
-    data = &(frame.data);
-
-    readSensors(&frame);
-    
-    gettimeofday(&tv, NULL);
-
-    data->module_id = config->module_id;
-    data->nonce = nonce;
-    data->timestamp_sec = tv.tv_sec;
-    data->timestamp_usec = tv.tv_usec;
-
-    memcpy(data->mesh_id, config->mesh_id, MESH_ID_LENGTH);
-    htonFrame(&frame);
-    doHMAC(((uint8_t *)&(frame.data)), sizeof(app_frame_data_t), ((uint8_t *)&(frame.hmac)));
-
-    memcpy(buffer, &frame, sizeof(app_frame_t));
-    return sizeof(app_frame_t);
-}
-
 int sameAddress(mesh_addr_t *a, mesh_addr_t *b)
 {
     uint8_t *addrA = a->addr;
@@ -175,6 +126,9 @@ void esp_task_meshservice(void *arg)
 
         if (esp_mesh_is_root()) //Sono il root: se ricevo il frame lo devo inoltrare al server.
         {
+            //Controllo che sia un mio figlio diretto.
+            //Aggrego il dato e aspetto di inviare tutto con la mia frequenza.
+
             //Se ricevo da me stesso passo.
             if (sameAddress(&staAddress, &from) == ESP_OK)
                 continue;
@@ -194,6 +148,20 @@ void esp_task_meshservice(void *arg)
                     ESP_LOGI(LOG_TAG, "Inoltro al server un frame da parte di " MACSTR, MAC2STR(from.addr));
                 }
             }
+        }else{//Non sono un root, ma un nodo intermedio.
+            //Controllo che sia un mio figlio diretto.
+            //Aggrego il dato e aspetto di inviare tutto con la mia frequenza.
+
+            //Se ricevo da me stesso passo.
+            if (sameAddress(&staAddress, &from) == ESP_OK)
+                continue;
+
+            //Andato in timeout continuiamo
+            if (err != ESP_ERR_MESH_TIMEOUT)
+            {
+
+            }
+
         }
         else
         { //Sono un nodo normale: ricevo la richiesta e la elaboro
@@ -218,6 +186,8 @@ void esp_task_meshservice(void *arg)
                 // }
             }
         }
+
+
     }
 
     is_task_meshservice_started = false;
@@ -505,7 +475,9 @@ void app_main(void)
     memcpy(&fdata.config.mesh_pwd, "mastrogatto", 12);
     memcpy(&fdata.config.station_ssid, "WIFI_HOME_R", 12);
     memcpy(&fdata.config.station_pwd, "", 0);
-
+    memcpy(&fdata.config.key_aes, "d5ff2c84db72f9039580bf5c45cc28b5", 32);
+    memcpy(&fdata.config.key_hmac, "dd1aafdf54893f1481885e2b7af5f31f",32);
+    
     //Init Crypto
     ESP_ERROR_CHECK(initHMAC(fdata.config.key_hmac));
     ESP_ERROR_CHECK(initAES(fdata.config.key_aes, fdata.config.iv_aes));

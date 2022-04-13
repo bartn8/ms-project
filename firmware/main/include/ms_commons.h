@@ -1,5 +1,5 @@
-#ifndef __MY_COMMONS_H__
-#define __MY_COMMONS_H__
+#ifndef __MS_COMMONS_H__
+#define __MS_COMMONS_H__
 
 /*******************************************************
  *                Constants

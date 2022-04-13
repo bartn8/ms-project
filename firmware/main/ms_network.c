@@ -1,6 +1,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#include <sys/time.h>
+
 #include "esp_err.h"
 #include "esp_log.h"
 #include "endian.h"
@@ -10,7 +12,7 @@
 #include "lwip/sockets.h"
 #include "lwip/sys.h"
 
-#include "include/network.h"
+#include "include/ms_network.h"
 
 static const char *LOG_TAG = "ms-project-network";
 static int udpSocket = 0;
@@ -120,4 +122,33 @@ void ntohFrame(app_frame_t *frame)
     data->module_id = be16toh(data->module_id);
     data->timestamp_sec = be64toh(data->timestamp_sec);
     data->timestamp_usec = be64toh(data->timestamp_usec);
+}
+
+size_t createSensorPacket(uint64_t module_id, uint64_t nonce, uint8_t *mesh_id, float *sensors, uint8_t *buffer, size_t len)
+{
+    app_config_t *config = &(fdata.config);
+    app_frame_t frame;
+    app_frame_data_t *data;
+    struct timeval tv;
+
+    if (len < sizeof(app_frame_t))
+        return -1;
+
+    data = &(frame.data);
+
+    gettimeofday(&tv, NULL);
+
+    data->module_id = module_id;
+    data->nonce = nonce;
+    data->timestamp_sec = tv.tv_sec;
+    data->timestamp_usec = tv.tv_usec;
+
+    memcpy(data->mesh_id, mesh_id, MESH_ID_LENGTH);
+    memcpy(data->sensors, sensors, BOARD_SENSORS);
+    
+    htonFrame(&frame);
+    doHMAC(((uint8_t *)&(frame.data)), sizeof(app_frame_data_t), ((uint8_t *)&(frame.hmac)));
+
+    memcpy(buffer, &frame, sizeof(app_frame_t));
+    return sizeof(app_frame_t);
 }

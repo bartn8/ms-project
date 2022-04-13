@@ -1,5 +1,3 @@
-#include "include/crypto.h"
-
 #include <stdio.h>
 #include <string.h> 
 
@@ -10,6 +8,8 @@
 //Crypto libs
 #include "mbedtls/md.h"
 #include "mbedtls/aes.h"
+
+#include "include/ms_crypto.h"
 
 static const char *LOG_TAG = "ms-project-network";
 
