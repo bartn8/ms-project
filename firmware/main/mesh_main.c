@@ -40,6 +40,10 @@ static uint8_t task_meshservice_rx_buf[RX_SIZE] = {
     0,
 };
 
+static uint8_t task_requestservice_rx_buf[RX_SIZE] = {
+    0,
+};
+
 static bool is_running = true;
 static bool is_mesh_connected = false;
 static bool is_ds_connected = false;
@@ -50,19 +54,55 @@ static mesh_addr_t mesh_parent_addr;
 static int mesh_layer = -1;
 static esp_netif_t *netif_sta = NULL;
 
-static flash_data_t fdata;
+    //Inizializzazione flash fake
+    // fdata.config.module_id = 2;
+    // fdata.config.wifi_channel = 1;
+    // fdata.config.server_port = 11412;
+    // fdata.config.task_meshservice_delay_millis = 500;
+    // fdata.config.mesh_send_timeout_millis = 1000;
+
+    // for (int i = 0; i < 6; i++)
+    //     fdata.config.mesh_id[i] = 0x71 + i;
+
+    // memcpy(&fdata.config.server_ip, "192.168.1.63", 13);
+    // memcpy(&fdata.config.mesh_pwd, "mastrogatto", 12);
+    // memcpy(&fdata.config.station_ssid, "WIFI_HOME_R", 12);
+    // memcpy(&fdata.config.station_pwd, "", 0);
+    // memcpy(&fdata.config.key_aes, "d5ff2c84db72f9039580bf5c45cc28b5", 32);
+    // memcpy(&fdata.config.key_hmac, "dd1aafdf54893f1481885e2b7af5f31f",32);
+
+static const flash_data_t fdata = {
+    .config.module_id = 2,
+    .config.wifi_channel = 1,
+    .config.server_port = 11412,
+    .config.task_meshservice_delay_millis = 500,
+    .config.mesh_send_timeout_millis = 1000,
+    .config.mesh_id = {0x71,0x72,0x73,0x74,0x75,0x76},
+    .config.server_ip = "192.168.1.63",
+    .config.mesh_pwd = "mastrogatto",
+    .config.station_ssid = "WIFI_HOME_R",
+    .config.station_pwd = "",
+    .config.key_aes = "d5ff2c84db72f9039580bf5c45cc28b5",
+    .config.key_hmac = "dd1aafdf54893f1481885e2b7af5f31f",
+    .config.s_key_aes = "e7e9ec3723447a642f762b2b6a15cfd7",
+    .config.s_key_hmac = "a6460deaf1ed731e0389556d7ca9e662",
+};
 
 static bool gotSTAIP = false;
 
 static mesh_addr_t rootAddress;
 static mesh_addr_t staAddress, softAPAddress;
 
-/*******************************************************
- *                Function Declarations
- *******************************************************/
+//Assunzione: l'aggregazione viene fatta single-hop
+//Se ricevo un pacchetto che non viene da mio figlio lo passo diretto al padre.
+static aggregate_mean_t agg_table[CONFIG_MESH_AP_CONNECTIONS];
+static int agg_table_size = 0;
+
+static mesh_mac_t children_table[CONFIG_MESH_AP_CONNECTIONS];
+static int children_table_size = 0;
 
 /*******************************************************
- *                Function Definitions
+ *                Functions
  *******************************************************/
 
 void startDHCPC()
@@ -109,7 +149,7 @@ int sameAddress(mesh_addr_t *a, mesh_addr_t *b)
 
 void esp_task_meshservice(void *arg)
 {
-    app_config_t *config = &(fdata.config);
+    const app_config_t *config = &(fdata.config);
 
     esp_err_t err;
     mesh_addr_t from;
@@ -121,8 +161,30 @@ void esp_task_meshservice(void *arg)
 
     while (is_running)
     {
-        //Devo ricevere i pacchetti per l'esterno
+        //Ricevo i pacchetti dentro la mesh
         err = esp_mesh_recv(&from, &data, 10, &flag, NULL, 0);
+
+        //Se ricevo da me stesso passo.
+        if (sameAddress(&staAddress, &from) != ESP_OK){
+            //Andato in timeout continuiamo
+            if (err != ESP_ERR_MESH_TIMEOUT)
+            {
+                if (err != ESP_OK || data.size < sizeof(app_frame_t))
+                {
+                    ESP_LOGE(LOG_TAG, "Recv failed. err: %d, size: %d from " MACSTR ", root: " MACSTR, err, data.size, MAC2STR(from.addr), MAC2STR(rootAddress.addr));
+                }
+                else
+                {
+                    //Ricevuto: devo aggregare
+                    //S
+                }
+            }
+        }
+
+        //Step di invio. Solo se triggerato
+        memcpy(task_meshservice_tx_buf, task_meshservice_rx_buf, sizeof(app_frame_t));
+                    sendUDP(task_meshservice_tx_buf, sizeof(app_frame_t), config->server_ip, config->server_port);
+                    ESP_LOGI(LOG_TAG, "Inoltro al server un frame da parte di " MACSTR, MAC2STR(from.addr));
 
         if (esp_mesh_is_root()) //Sono il root: se ricevo il frame lo devo inoltrare al server.
         {
@@ -159,15 +221,6 @@ void esp_task_meshservice(void *arg)
             //Andato in timeout continuiamo
             if (err != ESP_ERR_MESH_TIMEOUT)
             {
-
-            }
-
-        }
-        else
-        { //Sono un nodo normale: ricevo la richiesta e la elaboro
-            //Andato in timeout continuiamo
-            if (err != ESP_ERR_MESH_TIMEOUT)
-            {
                 // size_t len = createSensorPacket(data, task_meshservice_tx_buf, TX_SIZE);
 
                 // mesh_data_t data;
@@ -186,8 +239,6 @@ void esp_task_meshservice(void *arg)
                 // }
             }
         }
-
-
     }
 
     is_task_meshservice_started = false;
@@ -241,6 +292,8 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
         ESP_LOGI(LOG_TAG, "<MESH_EVENT_CHILD_CONNECTED>aid:%d, " MACSTR "",
                  child_connected->aid,
                  MAC2STR(child_connected->mac));
+
+        
     }
     break;
     case MESH_EVENT_CHILD_DISCONNECTED:
@@ -440,7 +493,7 @@ void ip_event_handler(void *arg, esp_event_base_t event_base,
     ESP_LOGI(LOG_TAG, "<IP_EVENT_STA_GOT_IP>IP:" IPSTR, IP2STR(&event->ip_info.ip));
     gotSTAIP = true;
 
-    app_config_t *config = &(fdata.config);
+    //app_config_t *config = &(fdata.config);
 
     if (esp_mesh_is_root())
     {
@@ -453,7 +506,7 @@ void ip_event_handler(void *arg, esp_event_base_t event_base,
 void wifi_event_handler(void *arg, esp_event_base_t event_base,
                       int32_t event_id, void *event_data)
 {
-    wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *)event_data;
+    //wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *)event_data;
     ESP_LOGW(LOG_TAG, "<WIFI_EVENT_AP_STADISCONNECTED>");
     gotSTAIP = false;
     closeSocket();
@@ -461,23 +514,6 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
 void app_main(void)
 {
-    //Inizializzazione flash fake
-    fdata.config.module_id = 2;
-    fdata.config.wifi_channel = 1;
-    fdata.config.server_port = 11412;
-    fdata.config.task_meshservice_delay_millis = 500;
-    fdata.config.mesh_send_timeout_millis = 1000;
-
-    for (int i = 0; i < 6; i++)
-        fdata.config.mesh_id[i] = 0x71 + i;
-
-    memcpy(&fdata.config.server_ip, "192.168.1.63", 13);
-    memcpy(&fdata.config.mesh_pwd, "mastrogatto", 12);
-    memcpy(&fdata.config.station_ssid, "WIFI_HOME_R", 12);
-    memcpy(&fdata.config.station_pwd, "", 0);
-    memcpy(&fdata.config.key_aes, "d5ff2c84db72f9039580bf5c45cc28b5", 32);
-    memcpy(&fdata.config.key_hmac, "dd1aafdf54893f1481885e2b7af5f31f",32);
-    
     //Init Crypto
     ESP_ERROR_CHECK(initHMAC(fdata.config.key_hmac));
     ESP_ERROR_CHECK(initAES(fdata.config.key_aes, fdata.config.iv_aes));

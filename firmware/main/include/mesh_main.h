@@ -25,7 +25,7 @@
 /*******************************************************
  *                Structures
  *******************************************************/
-
+//LEN < 512 bytes
 typedef struct
 {
   //ID MODULO 16 bit (2 byte)
@@ -50,6 +50,12 @@ typedef struct
   uint8_t key_aes[AES_KEY_LENGTH];
   //AES-CBC IV (16 byte)
   uint8_t iv_aes[AES_BLOCK_LENGTH];
+  //HMAC SECRET SERVER (32 byte)
+  uint8_t s_key_hmac[SHA256_KEY_LENGTH];
+  //AES SECRET SERVER (32 byte)
+  uint8_t s_key_aes[AES_KEY_LENGTH];
+  //AES-CBC IV SERVER (16 byte)
+  uint8_t s_iv_aes[AES_BLOCK_LENGTH];
   //TASK MESH SERVICE DELAY MILLIS 16 bit (2 byte)
   uint16_t task_meshservice_delay_millis;
   //SEND TIMEOUT MILLIS 16 bit (2 byte)
@@ -62,6 +68,19 @@ typedef struct
   uint32_t crc32;
 } flash_data_t;
 
+typedef struct{
+  uint16_t module_id;
+  int64_t start_timestamp_sec;
+  int64_t start_timestamp_usec;
+  uint32_t steps;
+  float sum_sensors[BOARD_SENSORS];
+} aggregate_mean_t;
+
+typedef struct{
+    uint16_t module_id;
+    uint8_t mac[6];
+} mesh_mac_t;
+
 /*******************************************************
  *                Variables Declarations
  *******************************************************/
@@ -70,15 +89,20 @@ typedef struct
  *                Function Declarations
  *******************************************************/
 
+void push_sensors(uint16_t module_id, float *sensors);
+void aggregate_sensors(uint16_t module_id, float *sensors, float *delta_time, uint32_t *steps);
+void pop_sensors_module(uint16_t module_id);
+
+void push_child_mac(uint8_t mac[6]);
+void pop_child_mac(uint8_t mac[6]);
+
+void push_child_id(uint16_t module_id);
+void pop_child_id(uint16_t module_id);
+
 void startDHCPC();
 void stopDHCPC();
 
 int setCurrentTime(int64_t timestamp_sec, int64_t timestamp_usec);
-
-void readSensors(app_frame_t *frame);
-void resetSensors();
-
-size_t createSensorPacket(uint64_t nonce, uint8_t *buffer, size_t len);
 
 int sameAddress(mesh_addr_t *a, mesh_addr_t *b);
 

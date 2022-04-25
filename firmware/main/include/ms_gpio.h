@@ -3,6 +3,8 @@
 
 #include "ms_commons.h"
 
-
+void readSensors(float *sensors);
+void updateSensors();
+void resetSensors();
 
 #endif

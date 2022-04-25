@@ -124,9 +124,9 @@ void ntohFrame(app_frame_t *frame)
     data->timestamp_usec = be64toh(data->timestamp_usec);
 }
 
-size_t createSensorPacket(uint64_t module_id, uint64_t nonce, uint8_t *mesh_id, float *sensors, uint8_t *buffer, size_t len)
+size_t createSensorPacket(uint64_t module_id, uint64_t nonce, int64_t start_timestamp_sec, int64_t start_timestamp_usec,
+ float *sensors, uint8_t *buffer, size_t len)
 {
-    app_config_t *config = &(fdata.config);
     app_frame_t frame;
     app_frame_data_t *data;
     struct timeval tv;
@@ -142,9 +142,9 @@ size_t createSensorPacket(uint64_t module_id, uint64_t nonce, uint8_t *mesh_id, 
     data->nonce = nonce;
     data->timestamp_sec = tv.tv_sec;
     data->timestamp_usec = tv.tv_usec;
+    data->aggregate_time = tv.tv_sec - start_timestamp_sec + (tv.tv_usec - start_timestamp_usec) / 1000000.0f;
 
-    memcpy(data->mesh_id, mesh_id, MESH_ID_LENGTH);
-    memcpy(data->sensors, sensors, BOARD_SENSORS);
+    memcpy(data->sensors, sensors, BOARD_SENSORS * sizeof(float));
     
     htonFrame(&frame);
     doHMAC(((uint8_t *)&(frame.data)), sizeof(app_frame_data_t), ((uint8_t *)&(frame.hmac)));
