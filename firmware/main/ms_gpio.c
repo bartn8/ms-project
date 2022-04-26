@@ -6,6 +6,7 @@
 
 #include "include/ms_gpio.h"
 
+static uint32_t ticks = 0;
 static float sensors_state[BOARD_SENSORS];
 
 //From: https://cse.usf.edu/~kchriste/tools/gennorm.c
@@ -48,14 +49,20 @@ void readSensors(float *sensors){
     memcpy(sensors, sensors_state, BOARD_SENSORS * sizeof(float));
 }
 
+uint32_t readTicks(){
+    return ticks;
+}
+
 void updateSensors(){
     //Per ora si fa un rumore gaussiano
     for (uint8_t i = 0; i < BOARD_SENSORS; i++)
     {
         sensors_state[i] = (float)norm(i, 1);
     }
+    ticks++;
 }
 
 void resetSensors(){
     memset(sensors_state, 0, BOARD_SENSORS * sizeof(float));
+    ticks = 0;
 }

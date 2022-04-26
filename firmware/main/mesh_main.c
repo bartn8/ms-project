@@ -27,6 +27,7 @@
 #include "include/ms_crypto.h"
 #include "include/ms_network.h"
 #include "include/ms_gpio.h"
+#include "include/ms_aggregate.h"
 
 /*******************************************************
  *                Variable Definitions
@@ -96,13 +97,6 @@ static bool gotSTAIP = false;
 static mesh_addr_t rootAddress;
 static mesh_addr_t staAddress, softAPAddress;
 
-//Assunzione: l'aggregazione viene fatta single-hop
-//Se ricevo un pacchetto che non viene da mio figlio lo passo diretto al padre.
-static aggregate_mean_t agg_table[CONFIG_MESH_AP_CONNECTIONS];
-static int agg_table_size = 0;
-
-static mesh_mac_t children_table[CONFIG_MESH_AP_CONNECTIONS];
-static int children_table_size = 0;
 
 /*******************************************************
  *                Functions
@@ -649,7 +643,7 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
 void periodic_sensors_check_callback(void* arg)
 {
-    //TODO: update tick and sensros
+    updateSensors();
 }
 
 void app_main(void)

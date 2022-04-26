@@ -68,19 +68,6 @@ typedef struct
   uint32_t crc32;
 } flash_data_t;
 
-typedef struct{
-  uint16_t module_id;
-  int64_t start_timestamp_sec;
-  int64_t start_timestamp_usec;
-  uint32_t steps;
-  float sum_sensors[BOARD_SENSORS];
-} aggregate_mean_t;
-
-typedef struct{
-    uint16_t module_id;
-    uint8_t mac[6];
-} mesh_mac_t;
-
 /*******************************************************
  *                Variables Declarations
  *******************************************************/
@@ -89,15 +76,7 @@ typedef struct{
  *                Function Declarations
  *******************************************************/
 
-void push_sensors(uint16_t module_id, float *sensors);
-void aggregate_sensors(uint16_t module_id, float *sensors, float *delta_time, uint32_t *steps);
-void pop_sensors_module(uint16_t module_id);
 
-void push_child_mac(uint8_t mac[6]);
-void pop_child_mac(uint8_t mac[6]);
-
-void push_child_id(uint16_t module_id);
-void pop_child_id(uint16_t module_id);
 
 void startDHCPC();
 void stopDHCPC();
