@@ -29,7 +29,7 @@ typedef enum
   SENSOR = 0,
   FLUSH,
   TIME,
-} app_packet_type_t;
+} app_frame_type_t;
 
 typedef struct
 {
@@ -59,14 +59,14 @@ typedef union {
   app_sensor_data_t sensor_data;
   app_flush_data_t flush_data;
   app_time_data_t time_data;
-} app_packet_data_t;
+} app_frame_data_t;
 
 typedef struct
 {
   uint8_t packet_type; //Per evitare endianess non uso app_packet_type_t
-  app_packet_data_t data;
+  app_frame_data_t data;
   uint8_t hmac[SHA256_DIGEST_LENGTH];
-} app_packet_t;
+} app_frame_t;
 
 typedef struct sockaddr_storage sockaddr_storage_t;
 

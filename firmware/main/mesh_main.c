@@ -49,10 +49,13 @@ static bool is_mesh_connected = false;
 static bool is_ds_connected = false;
 
 static bool is_task_meshservice_started = false;
+static bool is_task_bridgeservice_started = false;
 
 static mesh_addr_t mesh_parent_addr;
 static int mesh_layer = -1;
 static esp_netif_t *netif_sta = NULL;
+
+static esp_timer_handle_t periodic_sensors_timer;
 
     //Inizializzazione flash fake
     // fdata.config.module_id = 2;
@@ -245,13 +248,145 @@ void esp_task_meshservice(void *arg)
     vTaskDelete(NULL);
 }
 
+void esp_task_bridgeservice(void *arg)
+{
+    flash_config_t *config = &(fdata.config);
+    is_running = true;
 
-esp_err_t esp_start_tasks(void)
+    //Attendo che ho preso l'ip
+    while (esp_mesh_is_root() && !gotSTAIP)
+        vTaskDelay(config->task_bridgeservice_delay_millis / portTICK_RATE_MS);
+
+    if (esp_mesh_is_root())
+    {
+        //creazione socket
+        createSocket();
+        bindSocket();
+        //Invio al server un messaggio di cortesia.
+        size_t len = createHelloPacket(task_bridgeservice_tx_buf, TX_SIZE);
+        size_t len2 = sendUDP(task_bridgeservice_tx_buf, len);
+        ESP_LOGI(MESH_TAG, "Sent Hello package (sent %d bytes of %d)", len2, len);
+    }
+
+    while (is_running && esp_mesh_is_root())
+    {
+        //Ricevo senza timeout dal server.
+        size_t len = receiveUDP(task_bridgeservice_rx_buf, RX_SIZE);
+        //IMPORTANTE: copio direttamente nel buffer di trasmissione perché c'è sideeffect dopo
+        memcpy(task_bridgeservice_tx_buf, task_bridgeservice_rx_buf, len);
+
+        ESP_LOGI(MESH_TAG, "Received %d bytes from server", len);
+
+        if (len >= sizeof(app_request_t))
+        {
+            app_request_t *request = (app_request_t *)task_bridgeservice_rx_buf;
+            app_request_data_t *data = &(request->data);
+
+            //Check HMAC del server
+            if (!checkServerHMAC((uint8_t *)data, sizeof(app_request_data_t), request->hmac))
+            {
+                char myhmacstr[65];
+                char hmacstr[65];
+                char *myhmacstrpos = myhmacstr;
+                char *hmacstrpos = hmacstr;
+                uint8_t myhmac[HMAC_SHA256_DIGEST_SIZE];
+                doServerHMAC((uint8_t *)data, sizeof(app_request_data_t), myhmac);
+
+                for (int k = 0; k < HMAC_SHA256_DIGEST_SIZE; k++)
+                {
+                    myhmacstrpos += sprintf(myhmacstrpos, "%02x", myhmac[k]);
+                    hmacstrpos += sprintf(hmacstrpos, "%02x", request->hmac[k]);
+                }
+
+                ESP_LOGI(MESH_TAG, "Check Server HMAC failed (%s != %s)", myhmacstr, hmacstr);
+                continue;
+            }
+
+            ntohRequest(request);
+            setCurrentTime(data);
+
+            if (data->reqtype == ROOT)
+            {
+                //Invio al server un messaggio di cortesia.
+                size_t len = createHelloPacket(task_bridgeservice_tx_buf, TX_SIZE);
+                sendUDP(task_bridgeservice_tx_buf, len);
+            }
+            else if (data->reqtype == SENSORS || data->reqtype == RESET_SENSOR)
+            {
+                if (data->reqtype == RESET_SENSOR && data->module_id == config->module_id){
+                    //Il messaggio è rivolto solo a me: non ritrasmetto.
+                    resetSensors();
+                    ESP_LOGI(MESH_TAG, "Sensors trigger restored!");
+                }else{
+                    //Invio agli altri nodi il pacchetto del server inalterato
+                    mesh_addr_t route_table[CONFIG_MESH_ROUTE_TABLE_SIZE];
+                    int route_table_size = 0;
+                    esp_err_t err;
+                    mesh_data_t datamesh;
+
+                    datamesh.data = task_bridgeservice_tx_buf;
+                    datamesh.size = len;
+                    datamesh.proto = MESH_PROTO_BIN;
+                    datamesh.tos = MESH_TOS_P2P;
+
+                    //MAC address (6 bytes per address)
+                    esp_mesh_get_routing_table((mesh_addr_t *)&route_table,
+                                            CONFIG_MESH_ROUTE_TABLE_SIZE * 6, &route_table_size);
+
+                    for (int i = 0; i < route_table_size; i++)
+                    {
+                        //Se invio a me stesso passo.
+                        if (sameAddress(&staAddress, &route_table[i]) == ESP_OK)
+                            continue;
+
+                        //DEBUG
+                        ESP_LOGI(MESH_TAG, "Forward Sensor Packet to " MACSTR, MAC2STR(route_table[i].addr));
+
+                        err = esp_mesh_send(&route_table[i], &datamesh, MESH_DATA_P2P, NULL, 0);
+
+                        if (err)
+                        {
+                            ESP_LOGE(MESH_TAG,
+                                    "[ROOT-2-UNICAST][L:%d]parent:" MACSTR " to " MACSTR ", heap:%d[err:0x%x, proto:%d, tos:%d]",
+                                    mesh_layer, MAC2STR(mesh_parent_addr.addr),
+                                    MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
+                                    err, datamesh.proto, datamesh.tos);
+                        }
+                    }
+
+                    if(data->reqtype == SENSORS){
+                        //Invio al server il mio sensore.
+                        size_t len = createSensorPacket(data, task_bridgeservice_tx_buf, TX_SIZE);
+                        sendUDP(task_bridgeservice_tx_buf, len);
+                    }
+                }
+            }
+        }
+
+        //vTaskDelay(config->task_bridgeservice_delay_millis / portTICK_RATE_MS);
+    }
+
+    is_task_bridgeservice_started = false;
+    vTaskDelete(NULL);
+}
+
+
+esp_err_t esp_start_mesh_task(void)
 {
     if (!is_task_meshservice_started)
     {
         is_task_meshservice_started = true;
-        xTaskCreate(esp_task_meshservice, "TSKMSH", 3072, NULL, 5, NULL);
+        xTaskCreate(esp_task_meshservice, "TSKMSH", 2048, NULL, 5, NULL);
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t esp_start_bridge_task(void){
+    if (!is_task_bridgeservice_started && esp_mesh_is_root())
+    {
+        is_task_bridgeservice_started = true;
+        xTaskCreate(esp_task_bridgeservice, "TSKBRG", 2048, NULL, 5, NULL);
     }
 
     return ESP_OK;
@@ -343,7 +478,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
         last_layer = mesh_layer;
         is_mesh_connected = true;
         startDHCPC();
-        esp_start_tasks();
+        esp_start_mesh_task();
     }
     break;
     case MESH_EVENT_PARENT_DISCONNECTED:
@@ -512,8 +647,23 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
     closeSocket();
 }
 
+void periodic_sensors_check_callback(void* arg)
+{
+    //TODO: update tick and sensros
+}
+
 void app_main(void)
 {
+    //Timer Configuration
+    const esp_timer_create_args_t periodic_sensors_timer_args = {
+            .callback = &periodic_sensors_check_callback,
+            /* name is optional, but may help identify the timer when debugging */
+            .name = "sensors_check"
+    };
+
+    ESP_ERROR_CHECK(esp_timer_create(&periodic_sensors_timer_args, &periodic_sensors_timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_sensors_timer, CONFIG_SENSORS_CHECK_MICROS));
+
     //Init Crypto
     ESP_ERROR_CHECK(initHMAC(fdata.config.key_hmac));
     ESP_ERROR_CHECK(initAES(fdata.config.key_aes, fdata.config.iv_aes));
