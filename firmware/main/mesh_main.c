@@ -41,7 +41,10 @@ static uint8_t task_meshservice_rx_buf[RX_SIZE] = {
     0,
 };
 
-static uint8_t task_requestservice_rx_buf[RX_SIZE] = {
+static uint8_t task_bridgeservice_tx_buf[TX_SIZE] = {
+    0,
+};
+static uint8_t task_bridgeservice_rx_buf[RX_SIZE] = {
     0,
 };
 
@@ -79,7 +82,9 @@ static const flash_data_t fdata = {
     .config.wifi_channel = 1,
     .config.server_port = 11412,
     .config.task_meshservice_delay_millis = 500,
+    .config.task_bridgeservice_delay_millis = 500,
     .config.mesh_send_timeout_millis = 1000,
+    .config.task_sensors_period_millis = 100,
     .config.mesh_id = {0x71,0x72,0x73,0x74,0x75,0x76},
     .config.server_ip = "192.168.1.63",
     .config.mesh_pwd = "mastrogatto",
@@ -89,8 +94,8 @@ static const flash_data_t fdata = {
     .config.key_hmac = "dd1aafdf54893f1481885e2b7af5f31f",
     .config.s_key_aes = "e7e9ec3723447a642f762b2b6a15cfd7",
     .config.s_key_hmac = "a6460deaf1ed731e0389556d7ca9e662",
-    .config.iv_aes = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
-    .config.s_iv_aes = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    .config.iv_aes = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    .config.s_iv_aes = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
 };
 
 static bool gotSTAIP = false;
@@ -206,6 +211,9 @@ void esp_task_meshservice(void *arg)
 
     while (is_mesh_connected)
     {
+        //Se è il momento invio i dati aggregati
+        //TODO: if ticks >= ....
+
         //Ricevo i pacchetti dentro la mesh
         err = esp_mesh_recv(&from, &data, 0, &flag, NULL, 0);
 
@@ -221,7 +229,7 @@ void esp_task_meshservice(void *arg)
                 else
                 {
                     app_frame_t *frame = (app_frame_t *)task_bridgeservice_rx_buf;
-                    app_frame_type_t frameType = (app_frame_type_t)frame->packet_type;
+                    app_frame_type_t frameType = (app_frame_type_t)frame->frame_type;
 
                     //A seconda del tipo di messaggio ricevuto effettuo delle azioni.
                     if(frameType == SENSOR){
@@ -260,7 +268,7 @@ void esp_task_meshservice(void *arg)
                         }
                     }else if(frameType == FLUSH){
                         if(frame->module_id == 0 || frame->module_id == config->module_id){
-                            //TODO: while aggregate_n_pop_sensors >= 0, createsensorframe....
+                            //TODO: while aggregate_last_sensors >= 0, createsensorframe....
                         }
                     }
                 }
@@ -276,7 +284,8 @@ void esp_task_meshservice(void *arg)
 
 void esp_task_bridgeservice(void *arg)
 {
-    flash_config_t *config = &(fdata.config);
+    const app_config_t *config = &(fdata.config);
+    sockaddr_storage_t source_addr;
 
     //Attendo che ho preso l'ip
     while (esp_mesh_is_root() && !gotSTAIP)
@@ -286,105 +295,70 @@ void esp_task_bridgeservice(void *arg)
     {
         //creazione socket
         createSocket();
-        bindSocket();
+        bindSocket(config->local_port);
     }
 
     while (is_ds_connected && esp_mesh_is_root())
     {
         //Ricevo senza timeout dal server.
-        size_t len = receiveUDP(task_bridgeservice_rx_buf, RX_SIZE);
+        size_t len = receiveUDP(task_bridgeservice_rx_buf, RX_SIZE, &source_addr);
         //IMPORTANTE: copio direttamente nel buffer di trasmissione perché c'è sideeffect dopo
         memcpy(task_bridgeservice_tx_buf, task_bridgeservice_rx_buf, len);
 
-        ESP_LOGI(MESH_TAG, "Received %d bytes from server", len);
+        ESP_LOGI(LOG_TAG, "Received %d bytes from server", len);
 
-        if (len >= sizeof(app_request_t))
+        if (len >= sizeof(app_frame_t))
         {
-            app_request_t *request = (app_request_t *)task_bridgeservice_rx_buf;
-            app_request_data_t *data = &(request->data);
-
-            //Check HMAC del server
-            if (!checkServerHMAC((uint8_t *)data, sizeof(app_request_data_t), request->hmac))
+            app_frame_t *frame = (app_frame_t *)task_bridgeservice_rx_buf;
+            
+            if (frame->frame_type == TIME)
             {
-                char myhmacstr[65];
-                char hmacstr[65];
-                char *myhmacstrpos = myhmacstr;
-                char *hmacstrpos = hmacstr;
-                uint8_t myhmac[HMAC_SHA256_DIGEST_SIZE];
-                doServerHMAC((uint8_t *)data, sizeof(app_request_data_t), myhmac);
+                //Imposto il tempo
+                if(frame->module_id == 0 || frame->module_id == config->module_id){//Controllo che sia per me o sia broadcast
+                    app_time_data_t timeData = frame->data.time_data;
+                    setCurrentTime(timeData.timestamp_sec, timeData.timestamp_usec);
+                }
 
-                for (int k = 0; k < HMAC_SHA256_DIGEST_SIZE; k++)
+                //Invio agli altri nodi il pacchetto del server inalterato
+                mesh_addr_t route_table[CONFIG_MESH_ROUTE_TABLE_SIZE];
+                int route_table_size = 0;
+                esp_err_t err;
+                mesh_data_t datamesh;
+
+                datamesh.data = task_bridgeservice_tx_buf;
+                datamesh.size = len;
+                datamesh.proto = MESH_PROTO_BIN;
+                datamesh.tos = MESH_TOS_P2P;
+
+                //MAC address (6 bytes per address)
+                esp_mesh_get_routing_table((mesh_addr_t *)&route_table,
+                                        CONFIG_MESH_ROUTE_TABLE_SIZE * 6, &route_table_size);
+
+                for (int i = 0; i < route_table_size; i++)
                 {
-                    myhmacstrpos += sprintf(myhmacstrpos, "%02x", myhmac[k]);
-                    hmacstrpos += sprintf(hmacstrpos, "%02x", request->hmac[k]);
-                }
+                    //Se invio a me stesso passo.
+                    if (sameAddress(&staAddress, &route_table[i]) == ESP_OK)
+                        continue;
 
-                ESP_LOGI(MESH_TAG, "Check Server HMAC failed (%s != %s)", myhmacstr, hmacstr);
-                continue;
-            }
+                    //DEBUG
+                    ESP_LOGI(LOG_TAG, "Forward Sensor Packet to " MACSTR, MAC2STR(route_table[i].addr));
 
-            ntohRequest(request);
-            setCurrentTime(data);
+                    err = esp_mesh_send(&route_table[i], &datamesh, MESH_DATA_P2P, NULL, 0);
 
-            if (data->reqtype == ROOT)
-            {
-                //Invio al server un messaggio di cortesia.
-                size_t len = createHelloPacket(task_bridgeservice_tx_buf, TX_SIZE);
-                sendUDP(task_bridgeservice_tx_buf, len);
-            }
-            else if (data->reqtype == SENSORS || data->reqtype == RESET_SENSOR)
-            {
-                if (data->reqtype == RESET_SENSOR && data->module_id == config->module_id){
-                    //Il messaggio è rivolto solo a me: non ritrasmetto.
-                    resetSensors();
-                    ESP_LOGI(MESH_TAG, "Sensors trigger restored!");
-                }else{
-                    //Invio agli altri nodi il pacchetto del server inalterato
-                    mesh_addr_t route_table[CONFIG_MESH_ROUTE_TABLE_SIZE];
-                    int route_table_size = 0;
-                    esp_err_t err;
-                    mesh_data_t datamesh;
-
-                    datamesh.data = task_bridgeservice_tx_buf;
-                    datamesh.size = len;
-                    datamesh.proto = MESH_PROTO_BIN;
-                    datamesh.tos = MESH_TOS_P2P;
-
-                    //MAC address (6 bytes per address)
-                    esp_mesh_get_routing_table((mesh_addr_t *)&route_table,
-                                            CONFIG_MESH_ROUTE_TABLE_SIZE * 6, &route_table_size);
-
-                    for (int i = 0; i < route_table_size; i++)
+                    if (err)
                     {
-                        //Se invio a me stesso passo.
-                        if (sameAddress(&staAddress, &route_table[i]) == ESP_OK)
-                            continue;
-
-                        //DEBUG
-                        ESP_LOGI(MESH_TAG, "Forward Sensor Packet to " MACSTR, MAC2STR(route_table[i].addr));
-
-                        err = esp_mesh_send(&route_table[i], &datamesh, MESH_DATA_P2P, NULL, 0);
-
-                        if (err)
-                        {
-                            ESP_LOGE(MESH_TAG,
-                                    "[ROOT-2-UNICAST][L:%d]parent:" MACSTR " to " MACSTR ", heap:%d[err:0x%x, proto:%d, tos:%d]",
-                                    mesh_layer, MAC2STR(mesh_parent_addr.addr),
-                                    MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
-                                    err, datamesh.proto, datamesh.tos);
-                        }
-                    }
-
-                    if(data->reqtype == SENSORS){
-                        //Invio al server il mio sensore.
-                        size_t len = createSensorFrame(data, task_bridgeservice_tx_buf, TX_SIZE);
-                        sendUDP(task_bridgeservice_tx_buf, len);
+                        ESP_LOGE(LOG_TAG,
+                                "[ROOT-2-UNICAST][L:%d]parent:" MACSTR " to " MACSTR ", heap:%d[err:0x%x, proto:%d, tos:%d]",
+                                mesh_layer, MAC2STR(mesh_parent_addr.addr),
+                                MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
+                                err, datamesh.proto, datamesh.tos);
                     }
                 }
+                
             }
         }
 
-        //vTaskDelay(config->task_bridgeservice_delay_millis / portTICK_RATE_MS);
+        vTaskDelay(config->task_bridgeservice_delay_millis / portTICK_RATE_MS);
     }
 
     closeSocket();
@@ -687,7 +661,7 @@ void app_main(void)
     };
 
     ESP_ERROR_CHECK(esp_timer_create(&periodic_sensors_timer_args, &periodic_sensors_timer));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_sensors_timer, CONFIG_SENSORS_CHECK_MICROS));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_sensors_timer, fdata.config.task_sensors_period_millis*1000));
 
     //Init Crypto
     ESP_ERROR_CHECK(initHMAC(fdata.config.key_hmac));

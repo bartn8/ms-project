@@ -83,6 +83,7 @@ int aggregate_sensors(uint16_t module_id, float *sensors, float *delta_time, uin
     struct timeval tv;
 
     if (index >= 0){
+        gettimeofday(&tv, NULL);
         *delta_time = tv.tv_sec - agg_table[index].start_timestamp_sec + (tv.tv_usec - agg_table[index].start_timestamp_usec) / 1000000.0f;
         *steps = agg_table[index].steps;
 
@@ -95,9 +96,12 @@ int aggregate_sensors(uint16_t module_id, float *sensors, float *delta_time, uin
     return index;
 }
 
-int aggregate_n_pop_sensors(uint16_t *module_id, float *sensors, float *delta_time, uint32_t *steps){
+int aggregate_last_sensors(uint16_t *module_id, float *sensors, float *delta_time, uint32_t *steps){
     int16_t index = agg_table_size-1;
+    struct timeval tv;
+
     if(index>=0){
+        gettimeofday(&tv, NULL);
         *module_id = agg_table[index].module_id;
         *delta_time = tv.tv_sec - agg_table[index].start_timestamp_sec + (tv.tv_usec - agg_table[index].start_timestamp_usec) / 1000000.0f;
         *steps = agg_table[index].steps;

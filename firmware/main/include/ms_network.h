@@ -60,7 +60,7 @@ typedef struct
 {
   uint64_t nonce;
   uint16_t module_id;
-  uint8_t packet_type; //Per evitare endianess non uso app_packet_type_t
+  uint8_t frame_type; //Per evitare endianess non uso app_frame_type_t
   app_frame_data_t data;
   uint8_t hmac[SHA256_DIGEST_LENGTH];
 } app_frame_t;

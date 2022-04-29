@@ -23,7 +23,7 @@ typedef struct{
 
 int push_sensors(uint16_t module_id, float *sensors);
 int aggregate_sensors(uint16_t module_id, float *sensors, float *delta_time, uint32_t *steps);
-int aggregate_n_pop_sensors(uint16_t *module_id, float *sensors, float *delta_time, uint32_t *steps);
+int aggregate_last_sensors(uint16_t *module_id, float *sensors, float *delta_time, uint32_t *steps);
 int pop_sensors(uint16_t module_id);
 int pop_sensors_by_mac(uint8_t mac[6]);
 

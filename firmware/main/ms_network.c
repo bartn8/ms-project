@@ -108,7 +108,7 @@ size_t sendUDP(uint8_t *buf, size_t bufLen, const char *ip, uint16_t port)
 
 void htonFrame(app_frame_t *frame)
 {
-    app_frame_type_t frame_type = (app_frame_type_t)frame->packet_type;
+    app_frame_type_t frame_type = (app_frame_type_t)frame->frame_type;
     app_frame_data_t *data = &(frame->data);
 
     frame->nonce = htobe64(frame->nonce);
@@ -127,7 +127,7 @@ void htonFrame(app_frame_t *frame)
 
 void ntohFrame(app_frame_t *frame)
 {
-    app_frame_type_t frame_type = (app_frame_type_t)frame->packet_type;
+    app_frame_type_t frame_type = (app_frame_type_t)frame->frame_type;
     app_frame_data_t *data = &(frame->data);
 
     frame->nonce = be64toh(frame->nonce);
@@ -156,7 +156,7 @@ size_t createSensorFrame(uint64_t module_id, uint64_t nonce, int64_t start_times
 
     frame.module_id = module_id;
     frame.nonce = nonce;
-    frame.packet_type = (uint8_t) SENSOR;
+    frame.frame_type = (uint8_t) SENSOR;
     data = &(frame.data);
 
     gettimeofday(&tv, NULL);
