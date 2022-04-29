@@ -17,6 +17,7 @@
 /*******************************************************
  *                Macros
  *******************************************************/
+#define CHILDREN_TABLE_SIZE CONFIG_MESH_AP_CONNECTIONS
 
 /*******************************************************
  *                Constants
@@ -75,8 +76,9 @@ typedef struct
 /*******************************************************
  *                Function Declarations
  *******************************************************/
-
-
+int push_child(mesh_addr_t *addr);
+int is_child(mesh_addr_t *addr);
+int pop_child(mesh_addr_t *addr);
 
 void startDHCPC();
 void stopDHCPC();

@@ -45,7 +45,6 @@ static uint8_t task_requestservice_rx_buf[RX_SIZE] = {
     0,
 };
 
-static bool is_running = true;
 static bool is_mesh_connected = false;
 static bool is_ds_connected = false;
 
@@ -90,6 +89,8 @@ static const flash_data_t fdata = {
     .config.key_hmac = "dd1aafdf54893f1481885e2b7af5f31f",
     .config.s_key_aes = "e7e9ec3723447a642f762b2b6a15cfd7",
     .config.s_key_hmac = "a6460deaf1ed731e0389556d7ca9e662",
+    .config.iv_aes = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    .config.s_iv_aes = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
 };
 
 static bool gotSTAIP = false;
@@ -97,10 +98,58 @@ static bool gotSTAIP = false;
 static mesh_addr_t rootAddress;
 static mesh_addr_t staAddress, softAPAddress;
 
+static mesh_addr_t children_table[CHILDREN_TABLE_SIZE];
+static uint8_t children_table_size = 0;
 
 /*******************************************************
  *                Functions
  *******************************************************/
+
+static int16_t get_child_index(mesh_addr_t *addr){
+    int16_t index = -1;
+    for(uint8_t i = 0; i < children_table_size; i++){
+        if(sameAddress(addr, children_table+i)){
+            index = i;
+            break;
+        }
+    }
+    return index;
+}
+
+int push_child(mesh_addr_t *addr){
+    int16_t index = get_child_index(addr);
+
+    if(index == -1 ){
+        if(children_table_size < CHILDREN_TABLE_SIZE){
+            index = children_table_size;
+            memcpy(children_table+index, addr->addr, 6);
+            children_table_size++;
+        }
+    }
+
+    return index;
+}
+
+int is_child(mesh_addr_t *addr){
+    int16_t index = get_child_index(addr);
+    return index != -1;
+}
+
+int pop_child(mesh_addr_t *addr){
+    int16_t index = get_child_index(addr);
+
+    if(index != -1){
+        if (children_table_size > 0)
+            children_table_size--;
+
+        //Devo shiftare a sinistra
+        for(uint8_t i = index; i < children_table_size; i++){
+            memcpy(children_table+i, children_table+i+1, sizeof(mesh_addr_t));
+        }
+    }
+
+    return index;
+}
 
 void startDHCPC()
 {
@@ -154,12 +203,11 @@ void esp_task_meshservice(void *arg)
     int flag = 0;
     data.data = task_meshservice_rx_buf;
     data.size = RX_SIZE;
-    is_running = true;
 
-    while (is_running)
+    while (is_mesh_connected)
     {
         //Ricevo i pacchetti dentro la mesh
-        err = esp_mesh_recv(&from, &data, 10, &flag, NULL, 0);
+        err = esp_mesh_recv(&from, &data, 0, &flag, NULL, 0);
 
         //Se ricevo da me stesso passo.
         if (sameAddress(&staAddress, &from) != ESP_OK){
@@ -172,70 +220,54 @@ void esp_task_meshservice(void *arg)
                 }
                 else
                 {
-                    //Ricevuto: devo aggregare
-                    //S
+                    app_frame_t *frame = (app_frame_t *)task_bridgeservice_rx_buf;
+                    app_frame_type_t frameType = (app_frame_type_t)frame->packet_type;
+
+                    //A seconda del tipo di messaggio ricevuto effettuo delle azioni.
+                    if(frameType == SENSOR){
+                        //Ricevuto: devo aggregare se figlio diretto
+                        if(is_child(&from)){
+                            app_sensor_data_t sensorData = frame->data.sensor_data;
+                            push_sensors(frame->module_id, sensorData.sensors);
+                            associate_mac(frame->module_id, from.addr);
+                        }else{
+                            //Non è mio figlio, spedisco al root
+                            if (esp_mesh_is_root()) //Sono il root: se ricevo il frame lo devo inoltrare al server.
+                            {
+                                //Step di invio. Solo se triggerato
+                                memcpy(task_meshservice_tx_buf, task_meshservice_rx_buf, sizeof(app_frame_t));
+                                sendUDP(task_meshservice_tx_buf, sizeof(app_frame_t), config->server_ip, config->server_port);
+                                ESP_LOGI(LOG_TAG, "Inoltro al server un frame da parte di " MACSTR, MAC2STR(from.addr));
+                            }else{
+                                memcpy(task_meshservice_tx_buf, task_meshservice_rx_buf, sizeof(app_frame_t));
+
+                                mesh_data_t data_send;
+                                data_send.data = task_meshservice_tx_buf;
+                                data_send.size = data.size;
+                                data_send.proto = MESH_PROTO_BIN;
+                                data_send.tos = MESH_TOS_DEF;//No retransmission
+
+                                //Invio al server se possibile (la root fa da bridge).
+                                err = esp_mesh_send(NULL, &data_send, 0, NULL, 0);    
+
+                                ESP_LOGI(LOG_TAG, "Inoltro al root un frame da parte di " MACSTR, MAC2STR(from.addr));                        
+                            }
+                        }
+                    }else if(frameType == TIME){
+                        if(frame->module_id == 0 || frame->module_id == config->module_id){//Controllo che sia per me o sia broadcast
+                            app_time_data_t timeData = frame->data.time_data;
+                            setCurrentTime(timeData.timestamp_sec, timeData.timestamp_usec);
+                        }
+                    }else if(frameType == FLUSH){
+                        if(frame->module_id == 0 || frame->module_id == config->module_id){
+                            //TODO: while aggregate_n_pop_sensors >= 0, createsensorframe....
+                        }
+                    }
                 }
             }
         }
 
-        //Step di invio. Solo se triggerato
-        memcpy(task_meshservice_tx_buf, task_meshservice_rx_buf, sizeof(app_frame_t));
-                    sendUDP(task_meshservice_tx_buf, sizeof(app_frame_t), config->server_ip, config->server_port);
-                    ESP_LOGI(LOG_TAG, "Inoltro al server un frame da parte di " MACSTR, MAC2STR(from.addr));
-
-        if (esp_mesh_is_root()) //Sono il root: se ricevo il frame lo devo inoltrare al server.
-        {
-            //Controllo che sia un mio figlio diretto.
-            //Aggrego il dato e aspetto di inviare tutto con la mia frequenza.
-
-            //Se ricevo da me stesso passo.
-            if (sameAddress(&staAddress, &from) == ESP_OK)
-                continue;
-
-            //Andato in timeout continuiamo
-            if (err != ESP_ERR_MESH_TIMEOUT)
-            {
-                if (err != ESP_OK || data.size < sizeof(app_frame_t))
-                {
-                    ESP_LOGE(LOG_TAG, "(Master)Recv failed. err: %d, size: %d from " MACSTR ", root: " MACSTR, err, data.size, MAC2STR(from.addr), MAC2STR(rootAddress.addr));
-                }
-                else
-                {
-                    //Ricevuto: devo inoltrarlo al server.
-                    memcpy(task_meshservice_tx_buf, task_meshservice_rx_buf, sizeof(app_frame_t));
-                    sendUDP(task_meshservice_tx_buf, sizeof(app_frame_t), config->server_ip, config->server_port);
-                    ESP_LOGI(LOG_TAG, "Inoltro al server un frame da parte di " MACSTR, MAC2STR(from.addr));
-                }
-            }
-        }else{//Non sono un root, ma un nodo intermedio.
-            //Controllo che sia un mio figlio diretto.
-            //Aggrego il dato e aspetto di inviare tutto con la mia frequenza.
-
-            //Se ricevo da me stesso passo.
-            if (sameAddress(&staAddress, &from) == ESP_OK)
-                continue;
-
-            //Andato in timeout continuiamo
-            if (err != ESP_ERR_MESH_TIMEOUT)
-            {
-                // size_t len = createSensorPacket(data, task_meshservice_tx_buf, TX_SIZE);
-
-                // mesh_data_t data;
-                // data.data = task_meshservice_tx_buf;
-                // data.size = len;
-                // data.proto = MESH_PROTO_BIN;
-                // data.tos = MESH_TOS_P2P;
-
-                // //Invio al server se possibile (la root fa da bridge).
-                // err = esp_mesh_send(NULL, &data, 0, NULL, 0);
-
-                // if (err != ESP_OK)
-                // {
-                //     ESP_LOGE(LOG_TAG,
-                //                 "Failed to send packet to root: %d", err);
-                // }
-            }
-        }
+        vTaskDelay(config->task_meshservice_delay_millis / portTICK_RATE_MS);
     }
 
     is_task_meshservice_started = false;
@@ -245,7 +277,6 @@ void esp_task_meshservice(void *arg)
 void esp_task_bridgeservice(void *arg)
 {
     flash_config_t *config = &(fdata.config);
-    is_running = true;
 
     //Attendo che ho preso l'ip
     while (esp_mesh_is_root() && !gotSTAIP)
@@ -256,13 +287,9 @@ void esp_task_bridgeservice(void *arg)
         //creazione socket
         createSocket();
         bindSocket();
-        //Invio al server un messaggio di cortesia.
-        size_t len = createHelloPacket(task_bridgeservice_tx_buf, TX_SIZE);
-        size_t len2 = sendUDP(task_bridgeservice_tx_buf, len);
-        ESP_LOGI(MESH_TAG, "Sent Hello package (sent %d bytes of %d)", len2, len);
     }
 
-    while (is_running && esp_mesh_is_root())
+    while (is_ds_connected && esp_mesh_is_root())
     {
         //Ricevo senza timeout dal server.
         size_t len = receiveUDP(task_bridgeservice_rx_buf, RX_SIZE);
@@ -350,7 +377,7 @@ void esp_task_bridgeservice(void *arg)
 
                     if(data->reqtype == SENSORS){
                         //Invio al server il mio sensore.
-                        size_t len = createSensorPacket(data, task_bridgeservice_tx_buf, TX_SIZE);
+                        size_t len = createSensorFrame(data, task_bridgeservice_tx_buf, TX_SIZE);
                         sendUDP(task_bridgeservice_tx_buf, len);
                     }
                 }
@@ -359,6 +386,8 @@ void esp_task_bridgeservice(void *arg)
 
         //vTaskDelay(config->task_bridgeservice_delay_millis / portTICK_RATE_MS);
     }
+
+    closeSocket();
 
     is_task_bridgeservice_started = false;
     vTaskDelete(NULL);
@@ -422,7 +451,9 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
                  child_connected->aid,
                  MAC2STR(child_connected->mac));
 
-        
+        mesh_addr_t child_addr;
+        memcpy(child_addr.addr, child_connected->mac, 6);
+        push_child(&child_addr);
     }
     break;
     case MESH_EVENT_CHILD_DISCONNECTED:
@@ -431,6 +462,10 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
         ESP_LOGI(LOG_TAG, "<MESH_EVENT_CHILD_DISCONNECTED>aid:%d, " MACSTR "",
                  child_disconnected->aid,
                  MAC2STR(child_disconnected->mac));
+        mesh_addr_t child_addr;
+        memcpy(child_addr.addr, child_disconnected->mac, 6);
+        pop_child(&child_addr);
+        pop_sensors_by_mac(child_addr.addr);
     }
     break;
     case MESH_EVENT_ROUTING_TABLE_ADD:
@@ -542,9 +577,10 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
     case MESH_EVENT_TODS_STATE:
     {
         mesh_event_toDS_state_t *toDs_state = (mesh_event_toDS_state_t *)event_data;
-        is_ds_connected = *toDs_state == MESH_TODS_REACHABLE;
-
         ESP_LOGI(LOG_TAG, "<MESH_EVENT_TODS_REACHABLE>state:%d", *toDs_state);
+
+        is_ds_connected = *toDs_state == MESH_TODS_REACHABLE;
+        esp_start_bridge_task();
     }
     break;
     case MESH_EVENT_ROOT_ASKED_YIELD:
@@ -621,15 +657,6 @@ void ip_event_handler(void *arg, esp_event_base_t event_base,
     ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
     ESP_LOGI(LOG_TAG, "<IP_EVENT_STA_GOT_IP>IP:" IPSTR, IP2STR(&event->ip_info.ip));
     gotSTAIP = true;
-
-    //app_config_t *config = &(fdata.config);
-
-    if (esp_mesh_is_root())
-    {
-        //creazione socket
-        createSocket();
-        //bindSocket(localPort?);
-    }
 }
 
 void wifi_event_handler(void *arg, esp_event_base_t event_base,
@@ -643,7 +670,11 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
 void periodic_sensors_check_callback(void* arg)
 {
+    const app_config_t *config = &(fdata.config);
+    float sensors[BOARD_SENSORS];
     updateSensors();
+    readSensors(sensors);
+    push_sensors(config->module_id, sensors);
 }
 
 void app_main(void)
