@@ -8,8 +8,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
-#define PORT	 11412
-#define BUF_SIZE 1024
+#include "udpserver.h"
 
 
 #if __BIG_ENDIAN__
@@ -20,15 +19,11 @@
 # define ntohll(x) (((uint64_t)ntohl((x) & 0xFFFFFFFF) << 32) | ntohl((x) >> 32))
 #endif
 
-typedef struct{
-	int id;
-} my_packet1_t;
-
 // Driver code
 int main() {
 	int sockfd;
 	char buffer[BUF_SIZE];
-	char *hello = "Hello from server";
+	
 	struct sockaddr_in servaddr, cliaddr;
 	
 	// Creating socket file descriptor
@@ -56,7 +51,10 @@ int main() {
 	while(1){
 		
 		int len, n;
-		my_packet1_t *frame;
+		int ticks = 0;
+		app_frame_t *frame;
+		app_frame_type_t frameType;
+		app_sensor_data_t sensorData;
 
 		len = sizeof(cliaddr); //len is value/resuslt
 
@@ -64,9 +62,25 @@ int main() {
 					MSG_WAITALL, ( struct sockaddr *) &cliaddr, len);
 		
 		if(n >= sizeof(app_frame_t)){
-			frame = (my_packet1_t *) buffer;
-			//....
+			frame = (app_frame_t *) buffer;
+			frameType = (app_frame_type_t)frame->frame_type;
+
+			if(frameType == SENSOR){
+				sensorData = frame->data.sensor_data;
+
+				printf("Ricevuto pacchetto SENSOR\n");
+				printf("Nonce: %d, ID: %d, ");
+
+				ticks++;
+			}
 		}
+
+		if(ticks > TIME_TICKS){
+			//Invio pacchetto TIME
+			ticks = 0;
+		}
+
+
 	}
 	
 	return 0;

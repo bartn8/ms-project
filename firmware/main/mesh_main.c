@@ -80,13 +80,13 @@ static esp_timer_handle_t periodic_sensors_timer;
 static const flash_data_t fdata = {
     .config.module_id = 2,
     .config.wifi_channel = 1,
-    .config.server_port = 11412,
     .config.task_meshservice_delay_millis = 500,
     .config.task_bridgeservice_delay_millis = 500,
     .config.mesh_send_timeout_millis = 1000,
     .config.task_sensors_period_millis = 100,
     .config.mesh_id = {0x71,0x72,0x73,0x74,0x75,0x76},
     .config.server_ip = "192.168.1.63",
+    .config.server_port = 11412,
     .config.mesh_pwd = "mastrogatto",
     .config.station_ssid = "WIFI_HOME_R",
     .config.station_pwd = "",
@@ -228,10 +228,15 @@ void esp_task_meshservice(void *arg)
                 }
                 else
                 {
+                    //IMPORTANTE: copio direttamente nel buffer di trasmissione perché c'è sideeffect dopo
+                    memcpy(task_meshservice_tx_buf, task_meshservice_rx_buf, sizeof(app_frame_t));
+
                     app_frame_t *frame = (app_frame_t *)task_bridgeservice_rx_buf;
+                    ntohFrame(frame);
                     app_frame_type_t frameType = (app_frame_type_t)frame->frame_type;
 
                     //A seconda del tipo di messaggio ricevuto effettuo delle azioni.
+                    //Ricevo solo da altri nodi della mesh, non dal server
                     if(frameType == SENSOR){
                         //Ricevuto: devo aggregare se figlio diretto
                         if(is_child(&from)){
@@ -243,7 +248,6 @@ void esp_task_meshservice(void *arg)
                             if (esp_mesh_is_root()) //Sono il root: se ricevo il frame lo devo inoltrare al server.
                             {
                                 //Step di invio. Solo se triggerato
-                                memcpy(task_meshservice_tx_buf, task_meshservice_rx_buf, sizeof(app_frame_t));
                                 sendUDP(task_meshservice_tx_buf, sizeof(app_frame_t), config->server_ip, config->server_port);
                                 ESP_LOGI(LOG_TAG, "Inoltro al server un frame da parte di " MACSTR, MAC2STR(from.addr));
                             }else{
@@ -302,16 +306,19 @@ void esp_task_bridgeservice(void *arg)
     {
         //Ricevo senza timeout dal server.
         size_t len = receiveUDP(task_bridgeservice_rx_buf, RX_SIZE, &source_addr);
-        //IMPORTANTE: copio direttamente nel buffer di trasmissione perché c'è sideeffect dopo
-        memcpy(task_bridgeservice_tx_buf, task_bridgeservice_rx_buf, len);
 
         ESP_LOGI(LOG_TAG, "Received %d bytes from server", len);
 
         if (len >= sizeof(app_frame_t))
         {
+            //IMPORTANTE: copio direttamente nel buffer di trasmissione perché c'è sideeffect dopo
+            memcpy(task_bridgeservice_tx_buf, task_bridgeservice_rx_buf, len); 
+
             app_frame_t *frame = (app_frame_t *)task_bridgeservice_rx_buf;
+            ntohFrame(frame);
+            app_frame_type_t frameType = (app_frame_type_t)frame->frame_type;
             
-            if (frame->frame_type == TIME)
+            if (frameType == TIME)
             {
                 //Imposto il tempo
                 if(frame->module_id == 0 || frame->module_id == config->module_id){//Controllo che sia per me o sia broadcast
@@ -554,7 +561,8 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
         ESP_LOGI(LOG_TAG, "<MESH_EVENT_TODS_REACHABLE>state:%d", *toDs_state);
 
         is_ds_connected = *toDs_state == MESH_TODS_REACHABLE;
-        esp_start_bridge_task();
+        if(is_ds_connected)
+            esp_start_bridge_task();
     }
     break;
     case MESH_EVENT_ROOT_ASKED_YIELD:
@@ -734,6 +742,7 @@ void app_main(void)
            strlen(fdata.config.station_pwd));
 
     /* mesh softAP */
+    //TODO: da riconfigurare con dati locali
     ESP_ERROR_CHECK(esp_mesh_set_ap_authmode(CONFIG_MESH_AP_AUTHMODE));
     cfg.mesh_ap.max_connection = CONFIG_MESH_AP_CONNECTIONS;
     cfg.mesh_ap.nonmesh_max_connection = CONFIG_MESH_NON_MESH_AP_CONNECTIONS;
