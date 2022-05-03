@@ -58,8 +58,10 @@ int bindSocket(uint16_t port)
 }
 
 void closeSocket(){
-    if (udpSocket > 0)
+    if (udpSocket > 0){
         close(udpSocket);
+        udpSocket = 0;
+    }
 }
 
 size_t receiveUDP(uint8_t *buf, size_t bufLen, sockaddr_storage_t *source_addr)
