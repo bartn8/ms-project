@@ -13,6 +13,10 @@
  *                Constants
  *******************************************************/
 
+#define BOARD_SENSORS 10
+#define SHA256_DIGEST_LENGTH 32
+
+
 /*******************************************************
  *                Structures
  *******************************************************/
@@ -73,12 +77,11 @@ int bindSocket(uint16_t port);
 void closeSocket();
 
 size_t receiveUDP(uint8_t *buf, size_t bufLen, struct sockaddr_in *source_addr);
-size_t sendUDP(uint8_t *buf, size_t bufLen, const char *ip, uint16_t port);
+size_t sendUDP(uint8_t *buf, size_t bufLen, struct sockaddr_in * dest_addr);
 
 void htonFrame(app_frame_t * frame);
 void ntohFrame(app_frame_t * frame);
 
-size_t createTimeFrame(uint64_t module_id, uint64_t nonce, int64_t timestamp_sec, int64_t timestamp_usec,
- uint8_t *buffer, size_t len);
+size_t createTimeFrame(uint64_t module_id, uint64_t nonce, uint8_t *buffer, size_t len);
 
 #endif

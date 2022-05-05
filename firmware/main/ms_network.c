@@ -68,13 +68,12 @@ size_t receiveUDP(uint8_t *buf, size_t bufLen, sockaddr_storage_t *source_addr)
 {
     if (udpSocket > 0)
     {
-        char ipbuff[INET_ADDRSTRLEN];
+        //char ipbuff[INET_ADDRSTRLEN];
         socklen_t socklen = sizeof(sockaddr_storage_t);
         int len = recvfrom(udpSocket, buf, bufLen - 1, 0, (struct sockaddr *)source_addr, &socklen);
 
         //Controllo che sia il server che ha inviato il messaggio.
-
-        inet_ntop(source_addr->ss_family, &(((struct sockaddr_in *)&source_addr)->sin_addr), ipbuff, INET_ADDRSTRLEN);
+        //inet_ntop(source_addr->ss_family, &(((struct sockaddr_in *)&source_addr)->sin_addr), ipbuff, INET_ADDRSTRLEN);
 
         return len;
     }
