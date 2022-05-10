@@ -3,12 +3,14 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
 #include "udpserver.h"
+#include "udp_network.h"
 
 
 #if __BIG_ENDIAN__
@@ -21,62 +23,49 @@
 
 // Driver code
 int main() {
-	int sockfd;
-	char buffer[BUF_SIZE];
+	char buffertx[BUF_SIZE];
+	char bufferrx[BUF_SIZE];
 	
-	struct sockaddr_in servaddr, cliaddr;
-	
-	// Creating socket file descriptor
-	if ( (sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
-		perror("socket creation failed");
-		exit(EXIT_FAILURE);
-	}
-	
-	memset(&servaddr, 0, sizeof(servaddr));
+	struct sockaddr_in cliaddr;
 	memset(&cliaddr, 0, sizeof(cliaddr));
 	
-	// Filling server information
-	servaddr.sin_family = AF_INET; // IPv4
-	servaddr.sin_addr.s_addr = INADDR_ANY;
-	servaddr.sin_port = htons(PORT);
-	
-	// Bind the socket with the server address
-	if ( bind(sockfd, (const struct sockaddr *)&servaddr,
-			sizeof(servaddr)) < 0 )
-	{
-		perror("bind failed");
-		exit(EXIT_FAILURE);
-	}
+	createSocket();
+	bindSocket(PORT);
 	
 	while(1){
 		
-		int len, n;
+		int n;
 		int ticks = 0;
+		
 		app_frame_t *frame;
 		app_frame_type_t frameType;
-		app_sensor_data_t sensorData;
 
-		len = sizeof(cliaddr); //len is value/resuslt
-
-		n = recvfrom(sockfd, (char *)buffer, BUF_SIZE,
-					MSG_WAITALL, ( struct sockaddr *) &cliaddr, len);
+		n = receiveUDP(bufferrx, BUF_SIZE, &cliaddr);
 		
 		if(n >= sizeof(app_frame_t)){
-			frame = (app_frame_t *) buffer;
+			frame = (app_frame_t *) bufferrx;
 			frameType = (app_frame_type_t)frame->frame_type;
 
 			if(frameType == SENSOR){
-				sensorData = frame->data.sensor_data;
-
 				printf("Ricevuto pacchetto SENSOR\n");
-				printf("Nonce: %d, ID: %d, ");
+				printf("Nonce: %ld, ID: %d, Timestamp: %ld, Aggregate time: %f, Sensors: [", 
+				frame->data.sensor_data.nonce, frame->data.sensor_data.module_id, frame->data.sensor_data.timestamp_sec,
+				frame->data.sensor_data.aggregate_time);
+
+				int i = 0;
+				for(i = 0; i < BOARD_SENSORS-1; i++){
+					printf("%f, ", frame->data.sensor_data.sensors[i]);
+				}
+
+				printf("%f]\n", frame->data.sensor_data.sensors[i]);
 
 				ticks++;
 			}
 		}
 
 		if(ticks > TIME_TICKS){
-			//Invio pacchetto TIME
+			createTimeFrame(0, 0, buffertx, BUF_SIZE);
+			sendUDP(buffertx, sizeof(app_frame_t), &cliaddr);
 			ticks = 0;
 		}
 

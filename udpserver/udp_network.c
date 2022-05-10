@@ -3,6 +3,10 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/time.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 #include "udp_network.h"
 
@@ -24,8 +28,9 @@ int createSocket()
     return sockfd;
 }
 
-int bindSocket( uint16_t port){
+int bindSocket(uint16_t port){
 	// Filling server information
+    memset(&servaddr, 0, sizeof(servaddr));
 	servaddr.sin_family = AF_INET; // IPv4
 	servaddr.sin_addr.s_addr = INADDR_ANY;
 	servaddr.sin_port = htons(port);
@@ -50,6 +55,7 @@ size_t receiveUDP(uint8_t *buf, size_t bufLen, struct sockaddr_in * source_addr)
     if (sockfd > 0)
     {
         size_t n;
+        socklen_t source_addr_len = 
 
         n = recvfrom(sockfd, (char *)buf, bufLen,
                         MSG_WAITALL, ( struct sockaddr *) &source_addr, sizeof(struct sockaddr_in));
@@ -124,7 +130,8 @@ size_t createTimeFrame(uint64_t module_id, uint64_t nonce, uint8_t *buffer, size
     data->time_data.timestamp_usec = tv.tv_usec;
 
     htonFrame(&frame);
-    doHMAC(((uint8_t *)&(data->time_data)), sizeof(app_time_data_t), ((uint8_t *)&(frame.hmac)));
+    //TODO
+    //doHMAC(((uint8_t *)&(data->time_data)), sizeof(app_time_data_t), ((uint8_t *)&(frame.hmac)));
 
     memcpy(buffer, &frame, sizeof(app_frame_t));
     return sizeof(app_frame_t);
