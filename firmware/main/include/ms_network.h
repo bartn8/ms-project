@@ -33,8 +33,6 @@ typedef struct
 {
   uint64_t nonce;
   uint16_t module_id;
-  int64_t timestamp_sec;
-  int64_t timestamp_usec;
   float aggregate_time;
   float sensors[BOARD_SENSORS];
 } app_sensor_data_t;
@@ -85,7 +83,7 @@ size_t sendUDP(uint8_t *buf, size_t bufLen, const char *ip, uint16_t port);
 void htonFrame(app_frame_t * frame);
 void ntohFrame(app_frame_t * frame);
 
-size_t createSensorFrame(uint64_t module_id, uint64_t nonce, int64_t start_timestamp_sec, int64_t start_timestamp_usec,
+size_t createSensorFrame(uint64_t module_id, uint64_t nonce, float aggregate_time,
  float *sensors, uint8_t *buffer, size_t len);
 
 #endif

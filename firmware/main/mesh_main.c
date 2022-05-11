@@ -78,12 +78,13 @@ static esp_timer_handle_t periodic_sensors_timer;
     // memcpy(&fdata.config.key_hmac, "dd1aafdf54893f1481885e2b7af5f31f",32);
 
 static const flash_data_t fdata = {
-    .config.module_id = 2,
+    .config.module_id = 1,
     .config.wifi_channel = 1,
     .config.task_meshservice_delay_millis = 500,
     .config.task_bridgeservice_delay_millis = 500,
     .config.mesh_send_timeout_millis = 1000,
     .config.task_sensors_period_millis = 100,
+    .config.send_after_ticks = 10,
     .config.mesh_id = {0x71,0x72,0x73,0x74,0x75,0x76},
     .config.server_ip = "192.168.1.63",
     .config.server_port = 11412,
@@ -208,6 +209,8 @@ void esp_task_meshservice(void *arg)
     int flag = 0;
     data.data = task_meshservice_rx_buf;
     data.size = RX_SIZE;
+    bool flush = false;
+    
 
     while (is_mesh_connected)
     {
@@ -272,11 +275,33 @@ void esp_task_meshservice(void *arg)
                         }
                     }else if(frameType == FLUSH){
                         if(frame->module_id == 0 || frame->module_id == config->module_id){
-                            //TODO: while aggregate_last_sensors >= 0, createsensorframe....
+                            flush = true;
                         }
                     }
                 }
             }
+        }
+
+        if(flush || readTicks() >= config->send_after_ticks){
+            //TODO: while aggregate_last_sensors >= 0, createsensorframe....
+            uint16_t agg_module_id;
+            float agg_sensors[BOARD_SENSORS];
+            float agg_delta_time;
+            uint32_t agg_steps;
+
+            while(aggregate_last_sensors(&agg_module_id, agg_sensors, &agg_delta_time, &agg_steps) >= 0){
+                createSensorFrame(agg_module_id, 0, agg_delta_time, agg_sensors, task_meshservice_tx_buf, TX_SIZE);
+                if (esp_mesh_is_root()) //Sono il root: lo devo inoltrare al server.
+                {
+                    sendUDP(task_meshservice_tx_buf, sizeof(app_frame_t), config->server_ip, config->server_port);
+                    ESP_LOGI(LOG_TAG, "Invio al server un aggregato di %d", agg_module_id);
+                }
+                else{
+
+                }
+            }
+
+            resetSensors();
         }
 
         vTaskDelay(config->task_meshservice_delay_millis / portTICK_RATE_MS);
@@ -735,7 +760,7 @@ void app_main(void)
     memcpy((uint8_t *)&cfg.mesh_id, fdata.config.mesh_id, 6);
 
     /* router */
-    cfg.channel = CONFIG_MESH_CHANNEL;
+    cfg.channel = fdata.config.wifi_channel;
     cfg.router.ssid_len = strlen(fdata.config.station_ssid);
     memcpy((uint8_t *)&cfg.router.ssid, fdata.config.station_ssid, cfg.router.ssid_len);
     memcpy((uint8_t *)&cfg.router.password, fdata.config.station_pwd,
@@ -746,8 +771,8 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_mesh_set_ap_authmode(CONFIG_MESH_AP_AUTHMODE));
     cfg.mesh_ap.max_connection = CONFIG_MESH_AP_CONNECTIONS;
     cfg.mesh_ap.nonmesh_max_connection = CONFIG_MESH_NON_MESH_AP_CONNECTIONS;
-    memcpy((uint8_t *)&cfg.mesh_ap.password, CONFIG_MESH_AP_PASSWD,
-           strlen(CONFIG_MESH_AP_PASSWD));
+    memcpy((uint8_t *)&cfg.mesh_ap.password, fdata.config.mesh_pwd,
+           strlen(fdata.config.mesh_pwd));
     ESP_ERROR_CHECK(esp_mesh_set_config(&cfg));
 
     /* mesh start */

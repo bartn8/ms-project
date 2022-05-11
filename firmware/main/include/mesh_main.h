@@ -67,6 +67,7 @@ typedef struct
   uint16_t task_sensors_period_millis; 
   //SEND TIMEOUT MILLIS 16 bit (2 byte)
   uint16_t mesh_send_timeout_millis;
+  uint16_t send_after_ticks;
 } app_config_t;
 
 typedef struct

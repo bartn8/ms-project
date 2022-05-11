@@ -55,10 +55,10 @@ size_t receiveUDP(uint8_t *buf, size_t bufLen, struct sockaddr_in * source_addr)
     if (sockfd > 0)
     {
         size_t n;
-        socklen_t source_addr_len = 
+        socklen_t source_addr_len = sizeof(struct sockaddr_in);
 
         n = recvfrom(sockfd, (char *)buf, bufLen,
-                        MSG_WAITALL, ( struct sockaddr *) &source_addr, sizeof(struct sockaddr_in));
+                        MSG_WAITALL, ( struct sockaddr *) &source_addr, &source_addr_len);
 
         return n;
     }

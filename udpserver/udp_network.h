@@ -76,7 +76,7 @@ int createSocket();
 int bindSocket(uint16_t port);
 void closeSocket();
 
-size_t receiveUDP(uint8_t *buf, size_t bufLen, struct sockaddr_in *source_addr);
+size_t receiveUDP(uint8_t *buf, size_t bufLen, struct sockaddr_in * source_addr);
 size_t sendUDP(uint8_t *buf, size_t bufLen, struct sockaddr_in * dest_addr);
 
 void htonFrame(app_frame_t * frame);
