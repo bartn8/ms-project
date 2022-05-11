@@ -116,8 +116,6 @@ void htonFrame(app_frame_t *frame)
     frame->module_id = htobe16(frame->module_id);
 
     if(frame_type == SENSOR){
-        data->sensor_data.timestamp_sec = htobe64(data->sensor_data.timestamp_sec);
-        data->sensor_data.timestamp_usec = htobe64(data->sensor_data.timestamp_usec);
         data->sensor_data.aggregate_time = (float)htobe32((int)data->sensor_data.aggregate_time);
     }else if (frame_type == TIME)
     {
@@ -135,8 +133,6 @@ void ntohFrame(app_frame_t *frame)
     frame->module_id = be16toh(frame->module_id);
 
     if(frame_type == SENSOR){
-        data->sensor_data.timestamp_sec = be64toh(data->sensor_data.timestamp_sec);
-        data->sensor_data.timestamp_usec = be64toh(data->sensor_data.timestamp_usec);
         data->sensor_data.aggregate_time = (float)be32toh((int)data->sensor_data.aggregate_time);
     }else if (frame_type == TIME)
     {
@@ -145,12 +141,11 @@ void ntohFrame(app_frame_t *frame)
     }
 }
 
-size_t createSensorFrame(uint64_t module_id, uint64_t nonce, int64_t start_timestamp_sec, int64_t start_timestamp_usec,
+size_t createSensorFrame(uint64_t module_id, uint64_t nonce, float aggregate_time,
  float *sensors, uint8_t *buffer, size_t len)
 {
     app_frame_t frame;
     app_frame_data_t *data;
-    struct timeval tv;
 
     if (len < sizeof(app_frame_t))
         return -1;
@@ -159,12 +154,8 @@ size_t createSensorFrame(uint64_t module_id, uint64_t nonce, int64_t start_times
     frame.nonce = nonce;
     frame.frame_type = (uint8_t) SENSOR;
     data = &(frame.data);
-
-    gettimeofday(&tv, NULL);
     
-    data->sensor_data.timestamp_sec = tv.tv_sec;
-    data->sensor_data.timestamp_usec = tv.tv_usec;
-    data->sensor_data.aggregate_time = tv.tv_sec - start_timestamp_sec + (tv.tv_usec - start_timestamp_usec) / 1000000.0f;
+    data->sensor_data.aggregate_time = aggregate_time;
 
     memcpy(data->sensor_data.sensors, sensors, BOARD_SENSORS * sizeof(float));
     

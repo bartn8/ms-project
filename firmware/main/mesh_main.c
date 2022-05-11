@@ -258,7 +258,7 @@ void esp_task_meshservice(void *arg)
 
                                 mesh_data_t data_send;
                                 data_send.data = task_meshservice_tx_buf;
-                                data_send.size = data.size;
+                                data_send.size = sizeof(app_frame_t);
                                 data_send.proto = MESH_PROTO_BIN;
                                 data_send.tos = MESH_TOS_DEF;//No retransmission
 
@@ -283,21 +283,36 @@ void esp_task_meshservice(void *arg)
         }
 
         if(flush || readTicks() >= config->send_after_ticks){
-            //TODO: while aggregate_last_sensors >= 0, createsensorframe....
             uint16_t agg_module_id;
             float agg_sensors[BOARD_SENSORS];
             float agg_delta_time;
             uint32_t agg_steps;
 
             while(aggregate_last_sensors(&agg_module_id, agg_sensors, &agg_delta_time, &agg_steps) >= 0){
-                createSensorFrame(agg_module_id, 0, agg_delta_time, agg_sensors, task_meshservice_tx_buf, TX_SIZE);
-                if (esp_mesh_is_root()) //Sono il root: lo devo inoltrare al server.
+                size_t frame_size = createSensorFrame(agg_module_id, 0, agg_delta_time, agg_sensors, task_meshservice_tx_buf, TX_SIZE);
+                if (esp_mesh_is_root()) //Sono il root: lo devo inviare al server.
                 {
                     sendUDP(task_meshservice_tx_buf, sizeof(app_frame_t), config->server_ip, config->server_port);
-                    ESP_LOGI(LOG_TAG, "Invio al server un aggregato di %d", agg_module_id);
+                    ESP_LOGI(LOG_TAG, "Invio al server un aggregato di %d", agg_module_id);                   
                 }
                 else{
+                    //Devo inviarlo al padre
+                    mesh_data_t data_send;
+                    data_send.data = task_meshservice_tx_buf;
+                    data_send.size = frame_size;
+                    data_send.proto = MESH_PROTO_BIN;
+                    data_send.tos = MESH_TOS_DEF;//No retransmission
 
+                    err = esp_mesh_send(&mesh_parent_addr, &data_send, MESH_DATA_P2P, NULL, 0);
+
+                    if (err)
+                    {
+                        ESP_LOGE(LOG_TAG,
+                                "[CHILD-2-FATHER][L:%d]" MACSTR " to " MACSTR ", heap:%d[err:0x%x, proto:%d, tos:%d]",
+                                mesh_layer, MAC2STR(staAddress.addr), MAC2STR(mesh_parent_addr.addr),
+                                esp_get_minimum_free_heap_size(),
+                                err, data_send.proto, data_send.tos);
+                    }
                 }
             }
 
