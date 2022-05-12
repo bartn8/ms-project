@@ -59,8 +59,13 @@ typedef struct
   uint16_t module_id;
   uint8_t frame_type; //Per evitare endianess non uso app_frame_type_t
   app_frame_data_t data;
-  uint8_t hmac[SHA256_DIGEST_LENGTH];
 } app_frame_t;
+
+typedef struct
+{
+  app_frame_t frame;
+  uint8_t hmac[SHA256_DIGEST_LENGTH];
+} app_frame_hmac_t;
 
 typedef struct sockaddr_storage sockaddr_storage_t;
 
@@ -76,11 +81,11 @@ int createSocket();
 int bindSocket(uint16_t port);
 void closeSocket();
 
-int receiveUDP(uint8_t *buf, size_t bufLen, sockaddr_storage_t *source_addr);
+int receiveUDP(uint8_t *buf, size_t bufLen);
 int sendUDP(uint8_t *buf, size_t bufLen, const char *ip, uint16_t port);
 
-void htonFrame(app_frame_t * frame);
-void ntohFrame(app_frame_t * frame);
+void htonFrameHMAC(app_frame_hmac_t *frame_hmac);
+int ntohFrameHMAC(app_frame_hmac_t *frame_hmac);
 
 size_t createSensorFrame(uint64_t module_id, uint64_t nonce, float aggregate_time,
  float *sensors, uint8_t *buffer, size_t len);

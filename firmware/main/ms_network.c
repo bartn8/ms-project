@@ -45,16 +45,16 @@ int bindSocket(uint16_t port)
         int err = bind(udpSocket, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
         if (err < 0)
         {
-            ESP_LOGE(LOG_TAG, "Socket unable to bind: errno %d", errno);
+            ESP_LOGE(LOG_TAG, "(BIND)Socket unable to bind: errno %d", errno);
             return err;
         }
+        return ESP_OK;
     }
     else
     {
-        ESP_LOGW(LOG_TAG, "UDP Socket not initialized.");
-        return -1;
+        ESP_LOGW(LOG_TAG, "(BIND)UDP Socket not initialized.");
     }
-    return ESP_OK;
+    return -1;
 }
 
 void closeSocket(){
@@ -64,13 +64,14 @@ void closeSocket(){
     }
 }
 
-int receiveUDP(uint8_t *buf, size_t bufLen, sockaddr_storage_t *source_addr)
+int receiveUDP(uint8_t *buf, size_t bufLen)
 {
     if (udpSocket > 0)
     {
         //char ipbuff[INET_ADDRSTRLEN];
-        socklen_t socklen = sizeof(sockaddr_storage_t);
-        int len = recvfrom(udpSocket, buf, bufLen - 1, 0, (struct sockaddr *)source_addr, &socklen);
+        struct sockaddr_storage source_addr; // Large enough for both IPv4 or IPv6
+        socklen_t socklen = sizeof(source_addr);
+        int len = recvfrom(udpSocket, buf, bufLen - 1, 0, (struct sockaddr *)&source_addr, &socklen);
 
         //Controllo che sia il server che ha inviato il messaggio.
         //inet_ntop(source_addr->ss_family, &(((struct sockaddr_in *)&source_addr)->sin_addr), ipbuff, INET_ADDRSTRLEN);
@@ -107,8 +108,10 @@ int sendUDP(uint8_t *buf, size_t bufLen, const char *ip, uint16_t port)
     }
 }
 
-void htonFrame(app_frame_t *frame)
+void htonFrameHMAC(app_frame_hmac_t *frame_hmac)
 {
+    app_frame_t *frame = &(frame_hmac->frame);
+    uint8_t *hmac = frame_hmac->hmac;
     app_frame_type_t frame_type = (app_frame_type_t)frame->frame_type;
     app_frame_data_t *data = &(frame->data);
 
@@ -122,47 +125,63 @@ void htonFrame(app_frame_t *frame)
         data->time_data.timestamp_sec = htobe64(data->time_data.timestamp_sec);
         data->time_data.timestamp_usec = htobe64(data->time_data.timestamp_usec);      
     }
+
+    doHMAC((const uint8_t *)frame, sizeof(app_frame_t), hmac);
 }
 
-void ntohFrame(app_frame_t *frame)
+int ntohFrameHMAC(app_frame_hmac_t *frame_hmac)
 {
+    app_frame_t *frame = &(frame_hmac->frame);
+    uint8_t *hmac = frame_hmac->hmac;
+    uint8_t hmac_cal[SHA256_DIGEST_LENGTH];
     app_frame_type_t frame_type = (app_frame_type_t)frame->frame_type;
     app_frame_data_t *data = &(frame->data);
 
-    frame->nonce = be64toh(frame->nonce);
-    frame->module_id = be16toh(frame->module_id);
+    doHMAC((const uint8_t*)frame, sizeof(app_frame_t), hmac_cal);
 
-    if(frame_type == SENSOR){
-        //data->sensor_data.aggregate_time = be32toh(data->sensor_data.aggregate_time);
-    }else if (frame_type == TIME)
-    {
-        data->time_data.timestamp_sec = be64toh(data->time_data.timestamp_sec);
-        data->time_data.timestamp_usec = be64toh(data->time_data.timestamp_usec);      
+    int found = -1;
+    for(int i = 0; i < SHA256_DIGEST_LENGTH; i++){
+        if(hmac[i] != hmac_cal[i]){
+            found = i;
+            break;
+        }
     }
+
+    if(found == -1){
+        frame->nonce = be64toh(frame->nonce);
+        frame->module_id = be16toh(frame->module_id);
+
+        if(frame_type == SENSOR){
+            //data->sensor_data.aggregate_time = be32toh(data->sensor_data.aggregate_time);
+        }else if (frame_type == TIME)
+        {
+            data->time_data.timestamp_sec = be64toh(data->time_data.timestamp_sec);
+            data->time_data.timestamp_usec = be64toh(data->time_data.timestamp_usec);      
+        }
+    }
+    
+    return found;
 }
 
 size_t createSensorFrame(uint64_t module_id, uint64_t nonce, float aggregate_time,
  float *sensors, uint8_t *buffer, size_t len)
 {
-    app_frame_t frame;
-    app_frame_data_t *data;
-    uint8_t hmac[SHA256_DIGEST_LENGTH];
-
-    if (len < sizeof(app_frame_t))
+    app_frame_hmac_t frame_hmac;
+    app_frame_t *frame = &(frame_hmac.frame);
+    app_frame_data_t *data = &(frame->data);
+    
+    if (len < sizeof(app_frame_hmac_t))
         return -1;
 
-    frame.module_id = module_id;
-    frame.nonce = nonce;
-    frame.frame_type = (uint8_t) SENSOR;
+    frame->module_id = module_id;
+    frame->nonce = nonce;
+    frame->frame_type = (uint8_t) SENSOR;
 
-    data = &(frame.data);
     data->sensor_data.aggregate_time = aggregate_time;
     memcpy(data->sensor_data.sensors, sensors, BOARD_SENSORS * sizeof(float));
     
-    htonFrame(&frame);
+    htonFrameHMAC(&frame_hmac);
     
-    doHMAC((uint8_t *)&frame, sizeof(app_frame_t), (uint8_t *)hmac);
-    memcpy(frame.hmac, hmac, SHA256_DIGEST_LENGTH);
-    memcpy(buffer, &frame, sizeof(app_frame_t));
-    return sizeof(app_frame_t);
+    memcpy(buffer, &frame_hmac, sizeof(app_frame_hmac_t));
+    return sizeof(app_frame_hmac_t);
 }

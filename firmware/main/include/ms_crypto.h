@@ -34,7 +34,8 @@
  *******************************************************/
 
 int initHMAC(const uint8_t *key);
-void doHMAC(const uint8_t *payload, size_t payloadLength, uint8_t *hmacResult);
+int changeHMACKey(const uint8_t *key);
+int doHMAC(const uint8_t *payload, size_t payloadLength, uint8_t *hmacResult);
 void freeHMAC();
 
 int initAES(const uint8_t *key, const uint8_t *iv);

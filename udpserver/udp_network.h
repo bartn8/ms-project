@@ -57,8 +57,13 @@ typedef struct
   uint16_t module_id;
   uint8_t frame_type; //Per evitare endianess non uso app_frame_type_t
   app_frame_data_t data;
-  uint8_t hmac[SHA256_DIGEST_LENGTH];
 } app_frame_t;
+
+typedef struct
+{
+  app_frame_t frame;
+  uint8_t hmac[SHA256_DIGEST_LENGTH];
+} app_frame_hmac_t;
 
 /*******************************************************
  *                Variables Declarations
@@ -72,11 +77,11 @@ int createSocket();
 int bindSocket(uint16_t port);
 void closeSocket();
 
-size_t receiveUDP(uint8_t *buf, size_t bufLen, struct sockaddr_in * source_addr);
-size_t sendUDP(uint8_t *buf, size_t bufLen, struct sockaddr_in * dest_addr);
+int receiveUDP(uint8_t* buf, size_t bufLen, struct sockaddr_in* cliaddr, socklen_t* addrlen);
+int sendUDP(uint8_t *buf, size_t bufLen, struct sockaddr_in* dest_addr, socklen_t addrlen);
 
-void htonFrame(app_frame_t * frame);
-void ntohFrame(app_frame_t * frame);
+void htonFrameHMAC(app_frame_hmac_t *frame_hmac);
+int ntohFrameHMAC(app_frame_hmac_t *frame_hmac);
 
 size_t createTimeFrame(uint64_t module_id, uint64_t nonce, uint8_t *buffer, size_t len);
 

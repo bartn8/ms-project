@@ -25,51 +25,68 @@
 int main() {
 	char buffertx[BUF_SIZE];
 	char bufferrx[BUF_SIZE];
+	int ticks = 0;
 	
 	struct sockaddr_in cliaddr;
 	memset(&cliaddr, 0, sizeof(cliaddr));
+
+	socklen_t cliaddrlen = sizeof(cliaddr);
 	
 	int sock = createSocket();
 	bindSocket(PORT);
 	
 	printf("Creata socket: %d\n", sock);
 	
-	
 	while(1){
-		
 		int n;
-		int ticks = 0;
-		
+				
+		app_frame_hmac_t *frame_hmac;
 		app_frame_t *frame;
 		app_frame_type_t frameType;
 
-		n = receiveUDP(bufferrx, BUF_SIZE, &cliaddr);
+		n = receiveUDP(bufferrx, BUF_SIZE, &cliaddr, &cliaddrlen);
 		
-		if(n >= sizeof(app_frame_t)){
-			frame = (app_frame_t *) bufferrx;
-			frameType = (app_frame_type_t)frame->frame_type;
+		if(n >= sizeof(app_frame_hmac_t)){
+			frame_hmac = (app_frame_hmac_t *) bufferrx;
 
-			ntohFrame(frame);
+			int valid = ntohFrameHMAC(frame_hmac);
+			if(valid == -1){
+				frame = &(frame_hmac->frame);
+				frameType = (app_frame_type_t)frame->frame_type;
 
-			if(frameType == SENSOR){
-				printf("Ricevuto pacchetto SENSOR\n");
-				printf("Nonce: %ld, ID: %d, Aggregate time: %f, Sensors: [", 
-				frame->nonce, frame->module_id,	frame->data.sensor_data.aggregate_time);
+				if(frameType == SENSOR){
+					printf("(%d) Ricevuto pacchetto SENSOR\n", ticks);
+					printf("Nonce: %ld, ID: %d, Aggregate time: %f, Sensors: [", 
+					frame->nonce, frame->module_id,	frame->data.sensor_data.aggregate_time);
 
-				int i = 0;
-				for(i = 0; i < BOARD_SENSORS-1; i++){
-					printf("%f, ", frame->data.sensor_data.sensors[i]);
+					int i = 0;
+					for(i = 0; i < BOARD_SENSORS-1; i++){
+						printf("%f, ", frame->data.sensor_data.sensors[i]);
+					}
+
+					printf("%f]\n", frame->data.sensor_data.sensors[i]);
+
+					ticks++;
 				}
-
-				printf("%f]\n", frame->data.sensor_data.sensors[i]);
-
-				ticks++;
+			}else{
+				printf("HMAC non valido!\n");
 			}
+			
 		}
 
 		if(ticks > TIME_TICKS){
-			createTimeFrame(0, 0, buffertx, BUF_SIZE);
-			sendUDP(buffertx, sizeof(app_frame_t), &cliaddr);
+			size_t tosend = createTimeFrame(0, 0, buffertx, BUF_SIZE);
+			printf("Invio del pacchetto TIME (to send: %ld)", tosend);	
+
+
+			char buffer[INET_ADDRSTRLEN];
+			inet_ntop( AF_INET, &cliaddr.sin_addr, buffer, sizeof( buffer ));
+			printf(" address:%s, family: %d\n", buffer, cliaddr.sin_family);
+
+			int sent = sendUDP(buffertx, tosend, &cliaddr, sizeof(cliaddr));
+
+			printf("Sent: %d\n", sent);
+
 			ticks = 0;
 		}
 

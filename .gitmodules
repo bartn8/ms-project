@@ -1,0 +1,3 @@
+[submodule "udpserver/hmac_sha256"]
+	path = udpserver/hmac_sha256
+	url = https://github.com/h5p9sl/hmac_sha256.git

@@ -33,11 +33,18 @@ int initHMAC(const uint8_t *key)
     return mbedtls_md_hmac_starts(&md_ctx, key, SHA256_KEY_LENGTH);
 }
 
-void doHMAC(const uint8_t *payload, size_t payloadLength, uint8_t *hmacResult)
+int changeHMACKey(const uint8_t *key)
 {
-    mbedtls_md_hmac_reset(&md_ctx);
-    mbedtls_md_hmac_update(&md_ctx, payload, payloadLength);
-    mbedtls_md_hmac_finish(&md_ctx, hmacResult);
+    return mbedtls_md_hmac_starts(&md_ctx, key, SHA256_KEY_LENGTH);
+}
+
+int doHMAC(const uint8_t *payload, size_t payloadLength, uint8_t *hmacResult)
+{
+    int result = 0;
+    result += mbedtls_md_hmac_reset(&md_ctx);
+    result += mbedtls_md_hmac_update(&md_ctx, payload, payloadLength);
+    result += mbedtls_md_hmac_finish(&md_ctx, hmacResult);
+    return result;
 }
 
 void freeHMAC(){
