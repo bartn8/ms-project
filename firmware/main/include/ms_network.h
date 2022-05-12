@@ -31,8 +31,6 @@ typedef enum
 
 typedef struct
 {
-  uint64_t nonce;
-  uint16_t module_id;
   float aggregate_time;
   float sensors[BOARD_SENSORS];
 } app_sensor_data_t;

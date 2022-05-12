@@ -82,9 +82,7 @@ void htonFrame(app_frame_t *frame)
     frame->module_id = htobe16(frame->module_id);
 
     if(frame_type == SENSOR){
-        data->sensor_data.timestamp_sec = htobe64(data->sensor_data.timestamp_sec);
-        data->sensor_data.timestamp_usec = htobe64(data->sensor_data.timestamp_usec);
-        data->sensor_data.aggregate_time = (float)htobe32((int)data->sensor_data.aggregate_time);
+        //data->sensor_data.aggregate_time = (float)htobe32((int)data->sensor_data.aggregate_time);
     }else if (frame_type == TIME)
     {
         data->time_data.timestamp_sec = htobe64(data->time_data.timestamp_sec);
@@ -101,9 +99,7 @@ void ntohFrame(app_frame_t *frame)
     frame->module_id = be16toh(frame->module_id);
 
     if(frame_type == SENSOR){
-        data->sensor_data.timestamp_sec = be64toh(data->sensor_data.timestamp_sec);
-        data->sensor_data.timestamp_usec = be64toh(data->sensor_data.timestamp_usec);
-        data->sensor_data.aggregate_time = (float)be32toh((int)data->sensor_data.aggregate_time);
+        //data->sensor_data.aggregate_time = be32toh(data->sensor_data.aggregate_time);
     }else if (frame_type == TIME)
     {
         data->time_data.timestamp_sec = be64toh(data->time_data.timestamp_sec);

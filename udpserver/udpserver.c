@@ -29,8 +29,11 @@ int main() {
 	struct sockaddr_in cliaddr;
 	memset(&cliaddr, 0, sizeof(cliaddr));
 	
-	createSocket();
+	int sock = createSocket();
 	bindSocket(PORT);
+	
+	printf("Creata socket: %d\n", sock);
+	
 	
 	while(1){
 		
@@ -46,11 +49,12 @@ int main() {
 			frame = (app_frame_t *) bufferrx;
 			frameType = (app_frame_type_t)frame->frame_type;
 
+			ntohFrame(frame);
+
 			if(frameType == SENSOR){
 				printf("Ricevuto pacchetto SENSOR\n");
-				printf("Nonce: %ld, ID: %d, Timestamp: %ld, Aggregate time: %f, Sensors: [", 
-				frame->data.sensor_data.nonce, frame->data.sensor_data.module_id, frame->data.sensor_data.timestamp_sec,
-				frame->data.sensor_data.aggregate_time);
+				printf("Nonce: %ld, ID: %d, Aggregate time: %f, Sensors: [", 
+				frame->nonce, frame->module_id,	frame->data.sensor_data.aggregate_time);
 
 				int i = 0;
 				for(i = 0; i < BOARD_SENSORS-1; i++){
