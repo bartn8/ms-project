@@ -29,6 +29,7 @@ typedef enum
   TIME,
 } app_frame_type_t;
 
+//Implementation-dependent... Non posso usare hton... JSON???
 typedef struct
 {
   float aggregate_time;
@@ -75,8 +76,8 @@ int createSocket();
 int bindSocket(uint16_t port);
 void closeSocket();
 
-size_t receiveUDP(uint8_t *buf, size_t bufLen, sockaddr_storage_t *source_addr);
-size_t sendUDP(uint8_t *buf, size_t bufLen, const char *ip, uint16_t port);
+int receiveUDP(uint8_t *buf, size_t bufLen, sockaddr_storage_t *source_addr);
+int sendUDP(uint8_t *buf, size_t bufLen, const char *ip, uint16_t port);
 
 void htonFrame(app_frame_t * frame);
 void ntohFrame(app_frame_t * frame);

@@ -64,7 +64,7 @@ void closeSocket(){
     }
 }
 
-size_t receiveUDP(uint8_t *buf, size_t bufLen, sockaddr_storage_t *source_addr)
+int receiveUDP(uint8_t *buf, size_t bufLen, sockaddr_storage_t *source_addr)
 {
     if (udpSocket > 0)
     {
@@ -84,7 +84,7 @@ size_t receiveUDP(uint8_t *buf, size_t bufLen, sockaddr_storage_t *source_addr)
     }
 }
 
-size_t sendUDP(uint8_t *buf, size_t bufLen, const char *ip, uint16_t port)
+int sendUDP(uint8_t *buf, size_t bufLen, const char *ip, uint16_t port)
 {
     if (udpSocket > 0)
     {

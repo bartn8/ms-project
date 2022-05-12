@@ -78,7 +78,7 @@ static esp_timer_handle_t periodic_sensors_timer;
     // memcpy(&fdata.config.key_hmac, "dd1aafdf54893f1481885e2b7af5f31f",32);
 
 static const flash_data_t fdata = {
-    .config.module_id = 1,
+    .config.module_id = 2,
     .config.wifi_channel = 1,
     .config.task_meshservice_delay_millis = 500,
     .config.task_bridgeservice_delay_millis = 500,
@@ -246,7 +246,7 @@ void esp_task_meshservice(void *arg)
                             if (esp_mesh_is_root()) //Sono il root: se ricevo il frame lo devo inoltrare al server.
                             {
                                 //Step di invio. Solo se triggerato
-                                size_t len_send = sendUDP(task_meshservice_tx_buf, sizeof(app_frame_t), config->server_ip, config->server_port);
+                                int len_send = sendUDP(task_meshservice_tx_buf, sizeof(app_frame_t), config->server_ip, config->server_port);
                                 if(len_send >= sizeof(app_frame_t))
                                     ESP_LOGI(LOG_TAG, "Inoltro al server un frame da parte di " MACSTR, MAC2STR(from.addr));
                             }else{
@@ -256,7 +256,7 @@ void esp_task_meshservice(void *arg)
                                 data_send.data = task_meshservice_tx_buf;
                                 data_send.size = sizeof(app_frame_t);
                                 data_send.proto = MESH_PROTO_BIN;
-                                data_send.tos = MESH_TOS_DEF;//No retransmission
+                                data_send.tos = MESH_TOS_P2P;
 
                                 //Invio al server se possibile (la root fa da bridge).
                                 err = esp_mesh_send(NULL, &data_send, 0, NULL, 0);    
@@ -268,6 +268,7 @@ void esp_task_meshservice(void *arg)
                         if(frame->module_id == 0 || frame->module_id == config->module_id){//Controllo che sia per me o sia broadcast
                             app_time_data_t timeData = frame->data.time_data;
                             setCurrentTime(timeData.timestamp_sec, timeData.timestamp_usec);
+                            ESP_LOGI(LOG_TAG, "Ricevuto TIME: %ld", timeData.timestamp_sec);         
                         }
                     }else if(frameType == FLUSH){
                         if(frame->module_id == 0 || frame->module_id == config->module_id){
@@ -289,7 +290,7 @@ void esp_task_meshservice(void *arg)
                 size_t frame_size = createSensorFrame(agg_module_id, 0, agg_delta_time, agg_sensors, task_meshservice_tx_buf, TX_SIZE);
                 if (esp_mesh_is_root()) //Sono il root: lo devo inviare al server.
                 {
-                    size_t len_send = sendUDP(task_meshservice_tx_buf, sizeof(app_frame_t), config->server_ip, config->server_port);
+                    int len_send = sendUDP(task_meshservice_tx_buf, sizeof(app_frame_t), config->server_ip, config->server_port);
                     if(len_send >= sizeof(app_frame_t))
                         ESP_LOGI(LOG_TAG, "Invio al server un aggregato di %d, aggTime: %f", agg_module_id, agg_delta_time);
                 }
@@ -299,7 +300,7 @@ void esp_task_meshservice(void *arg)
                     data_send.data = task_meshservice_tx_buf;
                     data_send.size = frame_size;
                     data_send.proto = MESH_PROTO_BIN;
-                    data_send.tos = MESH_TOS_DEF;//No retransmission
+                    data_send.tos = MESH_TOS_P2P;
 
                     err = esp_mesh_send(&mesh_parent_addr, &data_send, MESH_DATA_P2P, NULL, 0);
 
@@ -346,9 +347,14 @@ void esp_task_bridgeservice(void *arg)
     while (gotSTAIP && esp_mesh_is_root())
     {
         //Ricevo senza timeout dal server.
-        size_t len = receiveUDP(task_bridgeservice_rx_buf, RX_SIZE, &source_addr);
+        int len = receiveUDP(task_bridgeservice_rx_buf, RX_SIZE, &source_addr);
 
-        ESP_LOGI(LOG_TAG, "Received %d bytes from server", len);
+        if(len < 0){
+            ESP_LOGI(LOG_TAG, "EOF server");
+            break;
+        }else{
+            ESP_LOGI(LOG_TAG, "Received %d bytes from server", len);
+        }
 
         if (len >= sizeof(app_frame_t))
         {
