@@ -290,7 +290,7 @@ void esp_task_meshservice(void *arg)
 
             while(aggregate_last_sensors(&agg_module_id, agg_sensors, &agg_delta_time, &agg_steps) >= 0){
                 
-                size_t frame_size = createSensorFrame(agg_module_id, 0, agg_delta_time, agg_sensors, task_meshservice_tx_buf, TX_SIZE);
+                size_t frame_size = createSensorFrame(agg_module_id, agg_delta_time, agg_sensors, task_meshservice_tx_buf, TX_SIZE);
                 
                 if (esp_mesh_is_root()) //Sono il root: lo devo inviare al server.
                 {

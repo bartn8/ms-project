@@ -53,7 +53,7 @@ typedef union {
 
 typedef struct
 {
-  uint64_t nonce;
+  uint64_t timestamp;
   uint16_t module_id;
   uint8_t frame_type; //Per evitare endianess non uso app_frame_type_t
   app_frame_data_t data;
@@ -83,6 +83,6 @@ int sendUDP(uint8_t *buf, size_t bufLen, struct sockaddr_in* dest_addr, socklen_
 void htonFrameHMAC(app_frame_hmac_t *frame_hmac);
 int ntohFrameHMAC(app_frame_hmac_t *frame_hmac);
 
-size_t createTimeFrame(uint64_t module_id, uint64_t nonce, uint8_t *buffer, size_t len);
+size_t createTimeFrame(uint64_t module_id, uint8_t *buffer, size_t len);
 
 #endif

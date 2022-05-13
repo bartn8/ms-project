@@ -115,7 +115,7 @@ void htonFrameHMAC(app_frame_hmac_t *frame_hmac)
     app_frame_type_t frame_type = (app_frame_type_t)frame->frame_type;
     app_frame_data_t *data = &(frame->data);
 
-    frame->nonce = htobe64(frame->nonce);
+    frame->timestamp = htobe64(frame->timestamp);
     frame->module_id = htobe16(frame->module_id);
 
     if(frame_type == SENSOR){
@@ -148,7 +148,7 @@ int ntohFrameHMAC(app_frame_hmac_t *frame_hmac)
     }
 
     if(found == -1){
-        frame->nonce = be64toh(frame->nonce);
+        frame->timestamp = be64toh(frame->timestamp);
         frame->module_id = be16toh(frame->module_id);
 
         if(frame_type == SENSOR){
@@ -163,19 +163,22 @@ int ntohFrameHMAC(app_frame_hmac_t *frame_hmac)
     return found;
 }
 
-size_t createSensorFrame(uint64_t module_id, uint64_t nonce, float aggregate_time,
+size_t createSensorFrame(uint64_t module_id, float aggregate_time,
  float *sensors, uint8_t *buffer, size_t len)
 {
     app_frame_hmac_t frame_hmac;
     app_frame_t *frame = &(frame_hmac.frame);
     app_frame_data_t *data = &(frame->data);
+    struct timeval tv;
     
     if (len < sizeof(app_frame_hmac_t))
         return -1;
 
     frame->module_id = module_id;
-    frame->nonce = nonce;
     frame->frame_type = (uint8_t) SENSOR;
+
+    gettimeofday(&tv, NULL);
+    frame->timestamp = tv.tv_sec;
 
     data->sensor_data.aggregate_time = aggregate_time;
     memcpy(data->sensor_data.sensors, sensors, BOARD_SENSORS * sizeof(float));

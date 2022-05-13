@@ -56,8 +56,8 @@ int main() {
 
 				if(frameType == SENSOR){
 					printf("(%d) Ricevuto pacchetto SENSOR\n", ticks);
-					printf("Nonce: %ld, ID: %d, Aggregate time: %f, Sensors: [", 
-					frame->nonce, frame->module_id,	frame->data.sensor_data.aggregate_time);
+					printf("Timestamp: %ld, ID: %d, Aggregate time: %f, Sensors: [", 
+					frame->timestamp, frame->module_id,	frame->data.sensor_data.aggregate_time);
 
 					int i = 0;
 					for(i = 0; i < BOARD_SENSORS-1; i++){
@@ -75,7 +75,7 @@ int main() {
 		}
 
 		if(ticks > TIME_TICKS){
-			size_t tosend = createTimeFrame(0, 0, buffertx, BUF_SIZE);
+			size_t tosend = createTimeFrame(0, buffertx, BUF_SIZE);
 			printf("Invio del pacchetto TIME (to send: %ld)", tosend);	
 
 

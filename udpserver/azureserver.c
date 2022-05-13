@@ -31,7 +31,6 @@
 
 
 /* Paste in the your iothub connection string  */
-//static const char* connectionString = "HostName=***REMOVED***;DeviceId=ms-sensor-1;ModuleId=modulo-1;SharedAccessKey=5rqg3H35sf1Nxlw6lWYpi0JJMte+aCHhr+2+nQqUt5I=";
 static const char* connectionString = "HostName=***REMOVED***;DeviceId=ms-sensor-1;SharedAccessKey=***REMOVED***";
 static bool g_continueRunning = true;
 static size_t g_message_count_send_confirmations = 0;
@@ -64,7 +63,6 @@ int main(void)
     IOTHUB_CLIENT_TRANSPORT_PROVIDER protocol = MQTT_Protocol;
     IOTHUB_MESSAGE_HANDLE message_handle;
     size_t messages_sent = 0;
-    const char* telemetry_msg = "test_message";
 
     // Used to initialize IoTHub SDK subsystem
     (void)IoTHub_Init();
@@ -129,51 +127,46 @@ int main(void)
                     frameType = (app_frame_type_t)frame->frame_type;
 
                     if(frameType == SENSOR){
+                        char message[400];
                         char module_id_str[10];
-                        char nonce_str[50];
+                        char timestamp_str[50];
                         char aggregate_time_str[50];
                         char sensors_str[200];
                         int sensors_pointer = 0;
 
 
                         printf("(%d) Ricevuto pacchetto SENSOR\n", ticks);
-                        printf("Nonce: %ld, ID: %d, Aggregate time: %f, Sensors: [", 
-                        frame->nonce, frame->module_id,	frame->data.sensor_data.aggregate_time);
-
-                       sprintf(module_id_str, "%d", frame->module_id);
-                       sprintf(nonce_str, "%ld", frame->nonce);
-                       sprintf(aggregate_time_str, "%f", frame->data.sensor_data.aggregate_time);
-
+                        
+                        sprintf(module_id_str, "%d", frame->module_id);
+                        sprintf(timestamp_str, "%ld", frame->timestamp);
+                        sprintf(aggregate_time_str, "%f", frame->data.sensor_data.aggregate_time);
+                        sensors_pointer += sprintf(sensors_str+sensors_pointer, "[");
 
                         int i = 0;
                         for(i = 0; i < BOARD_SENSORS-1; i++){
-                            printf("%f, ", frame->data.sensor_data.sensors[i]);
-
+                            sensors_pointer += sprintf(sensors_str+sensors_pointer, "%f,", frame->data.sensor_data.sensors[i]);
                         }
 
-                        printf("%f]\n", frame->data.sensor_data.sensors[i]);
+                        sensors_pointer += sprintf(sensors_str+sensors_pointer, "%f]", frame->data.sensor_data.sensors[i]);
                         
+                        sprintf(message, "{\"module_id\": %s, \"timestamp\": %s, \"aggregate_time\": %s, \"sensors\": %s}", module_id_str, timestamp_str, aggregate_time_str, sensors_str);
+                        printf("%s", message);
+
+
                         // Construct the iothub message from a string or a byte array
-                        message_handle = IoTHubMessage_CreateFromString(telemetry_msg);
+                        message_handle = IoTHubMessage_CreateFromString(message);
                         //message_handle = IoTHubMessage_CreateFromByteArray((const unsigned char*)msgText, strlen(msgText)));
 
                         // Set Message property
-                        /*
-                        (void)IoTHubMessage_SetMessageId(message_handle, "MSG_ID");
-                        (void)IoTHubMessage_SetCorrelationId(message_handle, "CORE_ID");
-                        (void)IoTHubMessage_SetContentTypeSystemProperty(message_handle, "application%2fjson");
+                        
+                        // (void)IoTHubMessage_SetMessageId(message_handle, "MSG_ID");
+                        // (void)IoTHubMessage_SetCorrelationId(message_handle, "CORE_ID");
+                        (void)IoTHubMessage_SetContentTypeSystemProperty(message_handle, "application/json");
                         (void)IoTHubMessage_SetContentEncodingSystemProperty(message_handle, "utf-8");
-                        (void)IoTHubMessage_SetMessageCreationTimeUtcSystemProperty(message_handle, "2020-07-01T01:00:00.346Z");
-                        */
-
-
-                       sprintf(sensors_str, "%ld", frame->module_id);
-                       
-
-
-
+                        // (void)IoTHubMessage_SetMessageCreationTimeUtcSystemProperty(message_handle, "2020-07-01T01:00:00.346Z");
+                                                
                         // Add custom properties to message
-                        (void)IoTHubMessage_SetProperty(message_handle, "module_id", "property_value");
+                        //(void)IoTHubMessage_SetProperty(message_handle, "module_id", "property_value");
 
                         (void)printf("Sending message %d to IoTHub\r\n", (int)(messages_sent + 1));
                         IoTHubDeviceClient_LL_SendEventAsync(device_ll_handle, message_handle, send_confirm_callback, NULL);
@@ -191,7 +184,7 @@ int main(void)
             }
 
             if(ticks > TIME_TICKS){
-                size_t tosend = createTimeFrame(0, 0, buffertx, BUF_SIZE);
+                size_t tosend = createTimeFrame(0, buffertx, BUF_SIZE);
                 printf("Invio del pacchetto TIME (to send: %ld)", tosend);	
 
 
@@ -206,15 +199,6 @@ int main(void)
                 ticks = 0;
             }
 
-            if (messages_sent < MESSAGE_COUNT)
-            {
-                
-            }
-            else if (g_message_count_send_confirmations >= MESSAGE_COUNT)
-            {
-                // After all messages are all received stop running
-                g_continueRunning = false;
-            }
 
             IoTHubDeviceClient_LL_DoWork(device_ll_handle);
             //ThreadAPI_Sleep(1);

@@ -55,7 +55,7 @@ typedef union {
 
 typedef struct
 {
-  uint64_t nonce;
+  uint64_t timestamp;
   uint16_t module_id;
   uint8_t frame_type; //Per evitare endianess non uso app_frame_type_t
   app_frame_data_t data;
@@ -87,7 +87,7 @@ int sendUDP(uint8_t *buf, size_t bufLen, const char *ip, uint16_t port);
 void htonFrameHMAC(app_frame_hmac_t *frame_hmac);
 int ntohFrameHMAC(app_frame_hmac_t *frame_hmac);
 
-size_t createSensorFrame(uint64_t module_id, uint64_t nonce, float aggregate_time,
+size_t createSensorFrame(uint64_t module_id, float aggregate_time,
  float *sensors, uint8_t *buffer, size_t len);
 
 #endif

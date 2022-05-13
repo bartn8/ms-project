@@ -88,7 +88,7 @@ void htonFrameHMAC(app_frame_hmac_t *frame_hmac)
     app_frame_type_t frame_type = (app_frame_type_t)frame->frame_type;
     app_frame_data_t *data = &(frame->data);
 
-    frame->nonce = htobe64(frame->nonce);
+    frame->timestamp = htobe64(frame->timestamp);
     frame->module_id = htobe16(frame->module_id);
 
     if(frame_type == SENSOR){
@@ -121,7 +121,7 @@ int ntohFrameHMAC(app_frame_hmac_t *frame_hmac)
     }
 
     if (found == -1){
-        frame->nonce = be64toh(frame->nonce);
+        frame->timestamp = be64toh(frame->timestamp);
         frame->module_id = be16toh(frame->module_id);
 
         if(frame_type == SENSOR){
@@ -136,7 +136,7 @@ int ntohFrameHMAC(app_frame_hmac_t *frame_hmac)
     return found;
 }
 
-size_t createTimeFrame(uint64_t module_id, uint64_t nonce, uint8_t *buffer, size_t len){
+size_t createTimeFrame(uint64_t module_id, uint8_t *buffer, size_t len){
     app_frame_hmac_t frame_hmac;
     app_frame_t *frame = &(frame_hmac.frame);
     app_frame_data_t *data = &(frame->data);
@@ -146,10 +146,11 @@ size_t createTimeFrame(uint64_t module_id, uint64_t nonce, uint8_t *buffer, size
         return -1;
 
     frame->module_id = module_id;
-    frame->nonce = nonce;
     frame->frame_type = (uint8_t) TIME;
     
     gettimeofday(&tv, NULL);
+
+    frame->timestamp = tv.tv_sec;
     
     data->time_data.timestamp_sec = tv.tv_sec;
     data->time_data.timestamp_usec = tv.tv_usec;
