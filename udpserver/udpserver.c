@@ -9,9 +9,9 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
-#include "udpserver.h"
-#include "udp_network.h"
 
+#include "udp_network.h"
+#include "udpserver.h"
 
 #if __BIG_ENDIAN__
 # define htonll(x) (x)
