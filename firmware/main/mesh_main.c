@@ -78,7 +78,7 @@ static esp_timer_handle_t periodic_sensors_timer;
     // memcpy(&fdata.config.key_hmac, "dd1aafdf54893f1481885e2b7af5f31f",32);
 
 static const flash_data_t fdata = {
-    .config.module_id = 2,
+    .config.module_id = 1,
     .config.wifi_channel = 1,
     .config.task_meshservice_delay_millis = 500,
     .config.task_bridgeservice_delay_millis = 500,
@@ -94,10 +94,7 @@ static const flash_data_t fdata = {
     .config.station_pwd = "",
     .config.key_aes = "d5ff2c84db72f9039580bf5c45cc28b5",
     .config.key_hmac = "dd1aafdf54893f1481885e2b7af5f31f",
-    .config.s_key_aes = "e7e9ec3723447a642f762b2b6a15cfd7",
-    .config.s_key_hmac = "a6460deaf1ed731e0389556d7ca9e662",
     .config.iv_aes = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
-    .config.s_iv_aes = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
 };
 
 static mesh_addr_t rootAddress;
@@ -228,11 +225,10 @@ void esp_task_meshservice(void *arg)
                 else
                 {
                     //IMPORTANTE: copio direttamente nel buffer di trasmissione perché c'è sideeffect dopo
-                    memcpy(task_meshservice_tx_buf, task_meshservice_rx_buf, sizeof(app_frame_t));
+                    memcpy(task_meshservice_tx_buf, task_meshservice_rx_buf, sizeof(app_frame_hmac_t));
 
-                    app_frame_hmac_t *frame_hmac = (app_frame_hmac_t *)task_bridgeservice_rx_buf;
+                    app_frame_hmac_t *frame_hmac = (app_frame_hmac_t *)task_meshservice_rx_buf;
                     
-                    changeHMACKey(config->s_key_hmac);
                     int found = ntohFrameHMAC(frame_hmac);
 
                     if(found == -1){
@@ -251,13 +247,10 @@ void esp_task_meshservice(void *arg)
                                 //Non è mio figlio, spedisco al root
                                 if (esp_mesh_is_root()) //Sono il root: se ricevo il frame lo devo inoltrare al server.
                                 {
-                                    //Step di invio. Solo se triggerato
                                     int len_send = sendUDP(task_meshservice_tx_buf, sizeof(app_frame_hmac_t), config->server_ip, config->server_port);
                                     if(len_send >= sizeof(app_frame_hmac_t))
-                                        ESP_LOGI(LOG_TAG, "Inoltro al server un frame da parte di " MACSTR, MAC2STR(from.addr));
+                                        ESP_LOGI(LOG_TAG, "Inoltro (multi-hop) al server un frame packet da parte di %d (" MACSTR ")", frame->module_id, MAC2STR(from.addr));
                                 }else{
-                                    memcpy(task_meshservice_tx_buf, task_meshservice_rx_buf, sizeof(app_frame_hmac_t));
-
                                     mesh_data_t data_send;
                                     data_send.data = task_meshservice_tx_buf;
                                     data_send.size = sizeof(app_frame_hmac_t);
@@ -267,7 +260,7 @@ void esp_task_meshservice(void *arg)
                                     //Invio al server se possibile (la root fa da bridge).
                                     err = esp_mesh_send(NULL, &data_send, 0, NULL, 0);    
 
-                                    ESP_LOGI(LOG_TAG, "Inoltro al root un frame da parte di " MACSTR, MAC2STR(from.addr));                        
+                                    ESP_LOGI(LOG_TAG, "Inoltro (multi-hop) al root un frame da parte di %d (" MACSTR ")", frame->module_id, MAC2STR(from.addr));                        
                                 }
                             }
                         }else if(frameType == TIME){
@@ -282,7 +275,7 @@ void esp_task_meshservice(void *arg)
                             }
                         }
                     }else{
-                        ESP_LOGW(LOG_TAG, "HMAC Server non valido!");       
+                        ESP_LOGW(LOG_TAG, "HMAC nodo non valido!");       
                     }
                 }
             }
@@ -297,14 +290,13 @@ void esp_task_meshservice(void *arg)
 
             while(aggregate_last_sensors(&agg_module_id, agg_sensors, &agg_delta_time, &agg_steps) >= 0){
                 
-                changeHMACKey(config->key_hmac);
                 size_t frame_size = createSensorFrame(agg_module_id, 0, agg_delta_time, agg_sensors, task_meshservice_tx_buf, TX_SIZE);
                 
                 if (esp_mesh_is_root()) //Sono il root: lo devo inviare al server.
                 {
                     int len_send = sendUDP(task_meshservice_tx_buf, sizeof(app_frame_hmac_t), config->server_ip, config->server_port);
                     if(len_send >= sizeof(app_frame_hmac_t))
-                        ESP_LOGI(LOG_TAG, "Invio al server un aggregato di %d, aggTime: %f", agg_module_id, agg_delta_time);
+                        ESP_LOGI(LOG_TAG, "Invio al server un aggregato (one-hop) di %d, aggTime: %f", agg_module_id, agg_delta_time);
                 }
                 else{
                     //Devo inviarlo al padre
@@ -324,7 +316,7 @@ void esp_task_meshservice(void *arg)
                                 esp_get_minimum_free_heap_size(),
                                 err, data_send.proto, data_send.tos);
                     }else{
-                        ESP_LOGI(LOG_TAG, "Invio al padre un aggregato di %d", agg_module_id);
+                        ESP_LOGI(LOG_TAG, "Invio al padre un aggregato (one-hop) di %d", agg_module_id);
                     }
                 }
             }
@@ -376,7 +368,6 @@ void esp_task_bridgeservice(void *arg)
 
             app_frame_hmac_t *frame_hmac = (app_frame_hmac_t *)task_bridgeservice_rx_buf;
             
-            changeHMACKey(config->s_key_hmac);
             int found = ntohFrameHMAC(frame_hmac);
 
             if(found == -1){
@@ -709,14 +700,14 @@ void ip_event_handler(void *arg, esp_event_base_t event_base,
     esp_start_bridge_task();
 }
 
-void wifi_event_handler(void *arg, esp_event_base_t event_base,
-                      int32_t event_id, void *event_data)
-{
-    //wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *)event_data;
-    ESP_LOGW(LOG_TAG, "<WIFI_EVENT_AP_STADISCONNECTED>");
-    gotSTAIP = false;
-    closeSocket();
-}
+// void wifi_event_handler(void *arg, esp_event_base_t event_base,
+//                       int32_t event_id, void *event_data)
+// {
+//     //wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *)event_data;
+//     ESP_LOGW(LOG_TAG, "<WIFI_EVENT_AP_STADISCONNECTED>");
+//     gotSTAIP = false;
+//     closeSocket();
+// }
 
 void periodic_sensors_check_callback(void* arg)
 {
@@ -766,7 +757,7 @@ void app_main(void)
     wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&config));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &ip_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED, &wifi_event_handler, NULL));
+    //ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED, &wifi_event_handler, NULL));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_FLASH));
     ESP_ERROR_CHECK(esp_wifi_start());
 

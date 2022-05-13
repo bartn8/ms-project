@@ -53,12 +53,6 @@ typedef struct
   uint8_t key_aes[AES_KEY_LENGTH];
   //AES-CBC IV (16 byte)
   uint8_t iv_aes[AES_BLOCK_LENGTH];
-  //HMAC SECRET SERVER (32 byte)
-  uint8_t s_key_hmac[SHA256_KEY_LENGTH];
-  //AES SECRET SERVER (32 byte)
-  uint8_t s_key_aes[AES_KEY_LENGTH];
-  //AES-CBC IV SERVER (16 byte)
-  uint8_t s_iv_aes[AES_BLOCK_LENGTH];
   //TASK MESH SERVICE DELAY MILLIS 16 bit (2 byte)
   uint16_t task_meshservice_delay_millis;
   //TASK BRIDGE SERVICE DELAY MILLIS 16 bit (2 byte)

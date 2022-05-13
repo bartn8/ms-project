@@ -17,8 +17,6 @@ static struct sockaddr_in servaddr;
 
 static char key_aes[] = "d5ff2c84db72f9039580bf5c45cc28b5";
 static char key_hmac[] = "dd1aafdf54893f1481885e2b7af5f31f";
-static char s_key_aes[] = "e7e9ec3723447a642f762b2b6a15cfd7";
-static char s_key_hmac[] = "a6460deaf1ed731e0389556d7ca9e662";
 
 int createSocket()
 {
@@ -101,7 +99,7 @@ void htonFrameHMAC(app_frame_hmac_t *frame_hmac)
         data->time_data.timestamp_usec = htobe64(data->time_data.timestamp_usec);      
     }
 
-    hmac_sha256(s_key_hmac, strlen(s_key_hmac), frame, sizeof(app_frame_t), hmac, SHA256_DIGEST_LENGTH);
+    hmac_sha256(key_hmac, strlen(key_hmac), frame, sizeof(app_frame_t), hmac, SHA256_DIGEST_LENGTH);
 }
 
 int ntohFrameHMAC(app_frame_hmac_t *frame_hmac)
