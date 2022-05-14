@@ -213,10 +213,11 @@ void esp_task_meshservice(void *arg)
         //Ricevo i pacchetti dentro la mesh
         err = esp_mesh_recv(&from, &data, 0, &flag, NULL, 0);
 
-        //Se ricevo da me stesso passo.
-        if (sameAddress(&staAddress, &from) != ESP_OK){
-            //Andato in timeout continuiamo
-            if (err != ESP_ERR_MESH_TIMEOUT)
+        //Andato in timeout continuiamo
+        if (err != ESP_ERR_MESH_TIMEOUT)
+        {
+            //Se ricevo da me stesso passo.
+            if (sameAddress(&staAddress, &from) != ESP_OK)
             {
                 if (err != ESP_OK || data.size < sizeof(app_frame_hmac_t))
                 {
