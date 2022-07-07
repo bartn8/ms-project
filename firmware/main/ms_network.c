@@ -188,3 +188,27 @@ size_t createSensorFrame(uint64_t module_id, float aggregate_time,
     memcpy(buffer, &frame_hmac, sizeof(app_frame_hmac_t));
     return sizeof(app_frame_hmac_t);
 }
+
+size_t createAdvFrame(uint64_t module_id, uint8_t *mac, uint8_t *buffer, size_t len)
+{
+    app_frame_hmac_t frame_hmac;
+    app_frame_t *frame = &(frame_hmac.frame);
+    app_frame_data_t *data = &(frame->data);
+    struct timeval tv;
+    
+    if (len < sizeof(app_frame_hmac_t))
+        return -1;
+
+    frame->module_id = module_id;
+    frame->frame_type = (uint8_t) ADV;
+
+    gettimeofday(&tv, NULL);
+    frame->timestamp = tv.tv_sec;
+
+    memcpy(data->adv_data.mac, mac, 6);
+    
+    htonFrameHMAC(&frame_hmac);
+    
+    memcpy(buffer, &frame_hmac, sizeof(app_frame_hmac_t));
+    return sizeof(app_frame_hmac_t);
+}

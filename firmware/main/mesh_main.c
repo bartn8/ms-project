@@ -86,11 +86,12 @@ static const flash_data_t fdata = {
     .config.task_sensors_period_millis = 100,
     .config.send_after_ticks = 10,
     .config.mesh_id = {0x71,0x72,0x73,0x74,0x75,0x76},
-    .config.server_ip = "192.168.1.99",
+    //Da aggiornare al momento
+    .config.server_ip = "192.168.169.246",
     .config.server_port = 11412,
     .config.local_port = 55123,
     .config.mesh_pwd = "mastrogatto",
-    .config.station_ssid = "WIFI_HOME_R",
+    .config.station_ssid = "",
     .config.station_pwd = "",
     .config.key_aes = "d5ff2c84db72f9039580bf5c45cc28b5",
     .config.key_hmac = "dd1aafdf54893f1481885e2b7af5f31f",
@@ -100,17 +101,30 @@ static const flash_data_t fdata = {
 static mesh_addr_t rootAddress;
 static mesh_addr_t staAddress, softAPAddress;
 
-static mesh_addr_t children_table[CHILDREN_TABLE_SIZE];
+static mesh_addr_t mac_children_table[CHILDREN_TABLE_SIZE];
+static uint64_t id_children_table[CHILDREN_TABLE_SIZE];
 static uint8_t children_table_size = 0;
 
 /*******************************************************
  *                Functions
  *******************************************************/
 
-static int16_t get_child_index(mesh_addr_t *addr){
+int sameAddress(mesh_addr_t *a, mesh_addr_t *b)
+{
+    uint8_t *addrA = a->addr;
+    uint8_t *addrB = b->addr;
+
+    for (int i = 0; i < 6; i++)
+        if (addrA[i] != addrB[i])
+            return -1;
+
+    return ESP_OK;
+}
+
+static int16_t get_child_index_by_mac(mesh_addr_t *addr){
     int16_t index = -1;
     for(uint8_t i = 0; i < children_table_size; i++){
-        if(sameAddress(addr, children_table+i)){
+        if(sameAddress(addr, mac_children_table+i) == ESP_OK){
             index = i;
             break;
         }
@@ -119,26 +133,38 @@ static int16_t get_child_index(mesh_addr_t *addr){
 }
 
 int push_child(mesh_addr_t *addr){
-    int16_t index = get_child_index(addr);
+    int16_t index = get_child_index_by_mac(addr);
+
+    ESP_LOGI(LOG_TAG, "Pushing child (" MACSTR ") (index: %d) (Table size %d < %d)", MAC2STR(addr->addr), index, children_table_size, CHILDREN_TABLE_SIZE);
 
     if(index == -1 ){
         if(children_table_size < CHILDREN_TABLE_SIZE){
             index = children_table_size;
-            memcpy(children_table+index, addr->addr, 6);
+            memcpy(mac_children_table+index, addr->addr, 6);
             children_table_size++;
+            ESP_LOGI(LOG_TAG, "Pushed child (" MACSTR ") (index: %d) (Table size %d < %d)", MAC2STR(mac_children_table[index].addr), index, children_table_size, CHILDREN_TABLE_SIZE);
         }
     }
 
     return index;
 }
 
-int is_child(mesh_addr_t *addr){
-    int16_t index = get_child_index(addr);
-    return index != -1;
+int set_child_id(mesh_addr_t *addr, uint64_t id){
+    int16_t index = get_child_index_by_mac(addr);
+    if (index != -1){
+        id_children_table[index] = id;
+        ESP_LOGI(LOG_TAG, "Set child (" MACSTR ") (module_id: %lld)", MAC2STR(addr->addr), id);
+    }
+    return index;
+}
+
+int is_child(mesh_addr_t *addr, uint64_t id){
+    int16_t index = get_child_index_by_mac(addr);
+    return id_children_table[index] == id;
 }
 
 int pop_child(mesh_addr_t *addr){
-    int16_t index = get_child_index(addr);
+    int16_t index = get_child_index_by_mac(addr);
 
     if(index != -1){
         if (children_table_size > 0)
@@ -146,7 +172,8 @@ int pop_child(mesh_addr_t *addr){
 
         //Devo shiftare a sinistra
         for(uint8_t i = index; i < children_table_size; i++){
-            memcpy(children_table+i, children_table+i+1, sizeof(mesh_addr_t));
+            memcpy(mac_children_table+i, mac_children_table+i+1, sizeof(mesh_addr_t));
+            id_children_table[i] = id_children_table[i+1];
         }
     }
 
@@ -183,18 +210,6 @@ int setCurrentTime(int64_t timestamp_sec, int64_t timestamp_usec)
         return -1;
 }
 
-int sameAddress(mesh_addr_t *a, mesh_addr_t *b)
-{
-    uint8_t *addrA = a->addr;
-    uint8_t *addrB = b->addr;
-
-    for (int i = 0; i < 6; i++)
-        if (addrA[i] != addrB[i])
-            return -1;
-
-    return ESP_OK;
-}
-
 void esp_task_meshservice(void *arg)
 {
     const app_config_t *config = &(fdata.config);
@@ -207,6 +222,29 @@ void esp_task_meshservice(void *arg)
     data.size = RX_SIZE;
     bool flush = false;
     
+    //Invio pacchetto adv al padre solo se non sono root
+    if(is_mesh_connected && !esp_mesh_is_root()){
+        size_t frame_size = createAdvFrame(config->module_id, staAddress.addr, task_meshservice_tx_buf, TX_SIZE);
+        //Devo inviarlo al padre
+        mesh_data_t data_send;
+        data_send.data = task_meshservice_tx_buf;
+        data_send.size = frame_size;
+        data_send.proto = MESH_PROTO_BIN;
+        data_send.tos = MESH_TOS_P2P;
+
+        err = esp_mesh_send(&mesh_parent_addr, &data_send, MESH_DATA_P2P, NULL, 0);
+
+        if (err)
+        {
+            ESP_LOGE(LOG_TAG,
+                    "[ADV][CHILD-2-FATHER][L:%d]" MACSTR " to " MACSTR ", heap:%d[err:0x%x, proto:%d, tos:%d]",
+                    mesh_layer, MAC2STR(staAddress.addr), MAC2STR(mesh_parent_addr.addr),
+                    esp_get_minimum_free_heap_size(),
+                    err, data_send.proto, data_send.tos);
+        }else{
+            ESP_LOGI(LOG_TAG, "Invio al padre l'ADV: %d", config->module_id);
+        }  
+    }
 
     while (is_mesh_connected)
     {
@@ -240,7 +278,7 @@ void esp_task_meshservice(void *arg)
                         //Ricevo solo da altri nodi della mesh, non dal server
                         if(frameType == SENSOR){
                             //Ricevuto: devo aggregare se figlio diretto
-                            if(is_child(&from)){
+                            if(is_child(&from, frame->module_id)){
                                 app_sensor_data_t sensorData = frame->data.sensor_data;
                                 push_sensors(frame->module_id, sensorData.sensors);
                                 associate_mac(frame->module_id, from.addr);
@@ -249,8 +287,9 @@ void esp_task_meshservice(void *arg)
                                 if (esp_mesh_is_root()) //Sono il root: se ricevo il frame lo devo inoltrare al server.
                                 {
                                     int len_send = sendUDP(task_meshservice_tx_buf, sizeof(app_frame_hmac_t), config->server_ip, config->server_port);
-                                    if(len_send >= sizeof(app_frame_hmac_t))
+                                    if(len_send >= sizeof(app_frame_hmac_t)){
                                         ESP_LOGI(LOG_TAG, "Inoltro (multi-hop) al server un frame packet da parte di %d (" MACSTR ")", frame->module_id, MAC2STR(from.addr));
+                                    }
                                 }else{
                                     mesh_data_t data_send;
                                     data_send.data = task_meshservice_tx_buf;
@@ -273,6 +312,17 @@ void esp_task_meshservice(void *arg)
                         }else if(frameType == FLUSH){
                             if(frame->module_id == 0 || frame->module_id == config->module_id){
                                 flush = true;
+                            }
+                        }else if(frameType == ADV){
+                            app_adv_data_t advData = frame->data.adv_data;
+                            //Controllo che sia lo stesso indirizzo (così sono sicuro che sia one-hop)
+                            mesh_addr_t from_check_addr;
+                            memcpy(from_check_addr.addr, advData.mac, 6);
+                            if(sameAddress(&from, & from_check_addr) == ESP_OK){
+                                //Ora posso aggiornare 
+                                if(set_child_id(&from_check_addr, frame->module_id) != -1){
+                                    ESP_LOGI(LOG_TAG, "Ricevuto ADV Correttamente");
+                                }
                             }
                         }
                     }else{
@@ -312,7 +362,7 @@ void esp_task_meshservice(void *arg)
                     if (err)
                     {
                         ESP_LOGE(LOG_TAG,
-                                "[CHILD-2-FATHER][L:%d]" MACSTR " to " MACSTR ", heap:%d[err:0x%x, proto:%d, tos:%d]",
+                                "[SENSOR][CHILD-2-FATHER][L:%d]" MACSTR " to " MACSTR ", heap:%d[err:0x%x, proto:%d, tos:%d]",
                                 mesh_layer, MAC2STR(staAddress.addr), MAC2STR(mesh_parent_addr.addr),
                                 esp_get_minimum_free_heap_size(),
                                 err, data_send.proto, data_send.tos);
@@ -406,7 +456,7 @@ void esp_task_bridgeservice(void *arg)
                             continue;
 
                         //DEBUG
-                        ESP_LOGI(LOG_TAG, "Forward Sensor Packet to " MACSTR, MAC2STR(route_table[i].addr));
+                        ESP_LOGI(LOG_TAG, "Forward Time Packet to " MACSTR, MAC2STR(route_table[i].addr));
 
                         err = esp_mesh_send(&route_table[i], &datamesh, MESH_DATA_P2P, NULL, 0);
 

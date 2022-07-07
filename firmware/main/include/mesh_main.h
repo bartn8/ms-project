@@ -78,7 +78,8 @@ typedef struct
  *                Function Declarations
  *******************************************************/
 int push_child(mesh_addr_t *addr);
-int is_child(mesh_addr_t *addr);
+int is_child(mesh_addr_t *addr, uint64_t id);
+int set_child_id(mesh_addr_t *addr, uint64_t id);
 int pop_child(mesh_addr_t *addr);
 
 void startDHCPC();
